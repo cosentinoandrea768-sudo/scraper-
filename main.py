@@ -1,14 +1,12 @@
-# main.py
 import os
 import asyncio
-from threading import Thread
 from datetime import datetime
-import pytz
+from threading import Thread
+
 from flask import Flask
 from telegram import Bot
 
-from scraper_logic import fetch_forex_factory_events
-from logic_impact import evaluate_impact
+from scraper_logic import fetch_today_events, format_event_message  # import dalle tue funzioni scraper
 
 # ==============================
 # ENV VARS
@@ -29,42 +27,32 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot attivo ✅"
+    return "Bot Forex Factory attivo ✅"
 
 # ==============================
 # GLOBAL STATE
 # ==============================
-sent_events = set()
+sent_events = set()  # per non mandare duplicati
 
 # ==============================
-# INVIO TELEGRAM
+# FUNZIONE INVIO EVENTI
 # ==============================
 async def send_forex_events():
-    events = fetch_forex_factory_events()
-    if not events:
-        print("[INFO] Nessun evento oggi")
+    today_events = fetch_today_events()  # restituisce lista di dict eventi filtrati medium/high
+
+    if not today_events:
+        print("[INFO] Nessun evento ad alto impatto oggi")
         return
 
-    for event in events:
-        if event["id"] in sent_events:
+    for event in today_events:
+        event_id = f"{event['time']}_{event['currency']}_{event['name']}"
+        if event_id in sent_events:
             continue
 
-        # Calcolo impatto
-        label, score = evaluate_impact(event["name"], event["actual"], event["forecast"])
-
-        message = (
-            f"💹 Forex Factory Event ({event['impact'].upper()})\n"
-            f"{event['currency']} - {event['name']}\n"
-            f"🕒 {event['time']} UTC\n"
-            f"Previous: {event['previous']}\n"
-            f"Forecast: {event['forecast']}\n"
-            f"Actual: {event['actual']}\n"
-            f"Impact: {label}"
-        )
-
+        message = format_event_message(event)  # funzione che formatta testo da inviare
         try:
             await bot.send_message(chat_id=CHAT_ID, text=message)
-            sent_events.add(event["id"])
+            sent_events.add(event_id)
             print(f"[SENT] {event['name']}")
         except Exception as e:
             print("[TELEGRAM ERROR]", e)
@@ -75,7 +63,7 @@ async def send_forex_events():
 async def scheduler():
     # Messaggio di startup
     try:
-        await bot.send_message(chat_id=CHAT_ID, text="🚀 Bot avviato correttamente - Forex Factory Monitor")
+        await bot.send_message(chat_id=CHAT_ID, text="🚀 Bot Forex Factory avviato ✅")
         print("[DEBUG] Messaggio di startup inviato")
     except Exception as e:
         print("[TELEGRAM ERROR] Startup:", e)
@@ -86,12 +74,13 @@ async def scheduler():
         except Exception as e:
             print("[LOOP ERROR]", e)
 
-        await asyncio.sleep(300)  # Controlla ogni 5 minuti
+        await asyncio.sleep(300)  # ogni 5 minuti
 
 # ==============================
 # MAIN
 # ==============================
 if __name__ == "__main__":
+
     # Avvia Flask in background
     def run_flask():
         app.run(host="0.0.0.0", port=PORT)
