@@ -1,96 +1,56 @@
 import os
-import asyncio
-from datetime import datetime
-from flask import Flask
-from telegram import Bot
+import requests
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-from scraper_logic import fetch_today_events, format_event_message
-
-# ==============================
-# ENV VARS
-# ==============================
+# Variabili d'ambiente
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-PORT = int(os.getenv("PORT", 10000))
 
-if not BOT_TOKEN or not CHAT_ID:
-    raise ValueError("BOT_TOKEN o CHAT_ID non impostati")
+if not BOT_TOKEN:
+    raise ValueError("Errore: la variabile d'ambiente BOT_TOKEN non è impostata!")
+if not CHAT_ID:
+    raise ValueError("Errore: la variabile d'ambiente CHAT_ID non è impostata!")
 
-bot = Bot(token=BOT_TOKEN)
+# URL del JSON con gli eventi ForexFactory (aggiornabile)
+FOREX_JSON_URL = "https://www.forexfactory.com/calendar-feed?week=this"
 
-# ==============================
-# FLASK
-# ==============================
-app = Flask(__name__)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Ciao! Il bot è attivo. Usa /news per ricevere le ultime news Forex.")
 
-@app.route("/")
-def home():
-    return "Bot attivo ✅"
-
-# ==============================
-# GLOBAL STATE
-# ==============================
-sent_events = set()
-
-# ==============================
-# INVIO TELEGRAM
-# ==============================
-async def send_events():
-    events = fetch_today_events()
-
-    if not events:
-        print("[INFO] Nessun evento oggi o selettori da aggiornare")
-        return
-
-    for event in events:
-        if event["id"] in sent_events:
-            continue
-
-        message = format_event_message(event)
-
-        try:
-            await bot.send_message(chat_id=CHAT_ID, text=message)
-            sent_events.add(event["id"])
-            print(f"[SENT] {event['name']}")
-        except Exception as e:
-            print("[TELEGRAM ERROR]", e)
-
-# ==============================
-# SCHEDULER
-# ==============================
-async def scheduler():
-    # Messaggio di startup
+async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        await bot.send_message(chat_id=CHAT_ID, text="🚀 Bot avviato correttamente")
-        print("[DEBUG] Messaggio di startup inviato")
+        # Richiesta del feed JSON
+        response = requests.get(FOREX_JSON_URL)
+        response.raise_for_status()
+        data = response.json()
+
+        # Estrarre le news del giorno corrente (ad esempio primo giorno nel feed)
+        events = data['days'][0]['events']  # primo giorno del feed
+        if not events:
+            message = "Nessun evento trovato oggi."
+        else:
+            message = "📊 News Forex di oggi:\n"
+            for event in events:
+                message += f"- {event['prefixedName']} ({event['timeLabel']})\n"
+                if event.get("forecast"):
+                    message += f"  📈 Previsione: {event['forecast']}\n"
+                if event.get("actual"):
+                    message += f"  📊 Attuale: {event['actual']}\n"
+        await context.bot.send_message(chat_id=CHAT_ID, text=message)
+
     except Exception as e:
-        print("[TELEGRAM ERROR] Startup:", e)
+        await context.bot.send_message(chat_id=CHAT_ID, text=f"Errore nel recupero delle news: {e}")
 
-    # Invio subito le news di oggi
-    await send_events()
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Loop: controlla ogni 5 minuti se ci sono nuovi eventi
-    while True:
-        try:
-            await send_events()
-        except Exception as e:
-            print("[LOOP ERROR]", e)
-        await asyncio.sleep(300)  # 5 minuti
+    # Aggiunta comandi
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("news", news))
 
-# ==============================
-# MAIN
-# ==============================
+    print("Bot avviato...")
+    app.run_polling()
+
 if __name__ == "__main__":
-    from threading import Thread
-
-    # Avvia Flask in background
-    def run_flask():
-        app.run(host="0.0.0.0", port=PORT)
-
-    Thread(target=run_flask).start()
-
-    # Avvia scheduler
-    try:
-        asyncio.run(scheduler())
-    except RuntimeError as e:
-        print("[ASYNCIO ERROR]", e)
+    main()
