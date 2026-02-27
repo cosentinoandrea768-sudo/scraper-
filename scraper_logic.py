@@ -1,59 +1,70 @@
 import requests
-from bs4 import BeautifulSoup
+import re
 import json
+from datetime import datetime, timezone, timedelta
 
 FOREX_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 
-def get_calendar_data():
-    # Scarica la pagina principale del calendario
-    r = requests.get(FOREX_CALENDAR_URL)
-    r.raise_for_status()
-    
-    soup = BeautifulSoup(r.text, "html.parser")
-    
-    # Cerca lo script contenente window.calendarComponentStates
-    scripts = soup.find_all("script")
-    calendar_json = None
-    for script in scripts:
-        if "window.calendarComponentStates" in script.text:
-            # Estrai il JSON dopo il primo =
-            js_text = script.string
-            start = js_text.find("{")
-            end = js_text.rfind("}") + 1
-            calendar_json = js_text[start:end]
-            break
-    
-    if not calendar_json:
-        return []
-
-    # Converte la stringa in dizionario Python
+def get_forexfactory_news():
+    """
+    Recupera le news dal JS embedded di ForexFactory per il giorno corrente.
+    Restituisce una lista di dizionari:
+    [
+        {
+            "prefixedName": "...",
+            "timeLabel": "...",
+            "forecast": "...",
+            "actual": "..."
+        }, ...
+    ]
+    """
     try:
-        data = json.loads(calendar_json)
-        # La chiave 1 contiene i giorni
-        return data["1"]["days"]
+        resp = requests.get(FOREX_CALENDAR_URL, timeout=10)
+        resp.raise_for_status()
+        html = resp.text
+
+        # Cerca la variabile JS window.calendarComponentStates
+        pattern = r"window\.calendarComponentStates\s*=\s*(\{.*?\});"
+        match = re.search(pattern, html, re.DOTALL)
+
+        if not match:
+            print("❌ Non ho trovato calendarComponentStates nel JS")
+            return []
+
+        data_js = match.group(1)
+
+        # Converte in JSON valido (rimuove eventuali JS comments o trailing commas)
+        data_json = json.loads(
+            re.sub(r",\s*([\]}])", r"\1", data_js.replace("'", '"'))
+        )
+
+        # Prendi il giorno corrente (Europe/Rome)
+        tz = timezone(timedelta(hours=1))  # Europe/Rome = UTC+1
+        today_str = datetime.now(tz).strftime("%b %d")  # es. "Feb 23"
+
+        events_today = []
+
+        # data_json è un dict con chiave '1' → giorni
+        for day in data_json.get("1", {}).get("days", []):
+            if today_str in day["date"]:
+                for event in day.get("events", []):
+                    events_today.append({
+                        "prefixedName": event.get("prefixedName", "N/A"),
+                        "timeLabel": event.get("timeLabel", "All Day"),
+                        "forecast": event.get("forecast", ""),
+                        "actual": event.get("actual", ""),
+                        "url": f"https://www.forexfactory.com{event.get('soloUrl','')}"
+                    })
+                break
+
+        return events_today
+
     except Exception as e:
-        print("Errore parsing JSON:", e)
+        print(f"Errore nello scraping delle news: {e}")
         return []
 
-def get_todays_events():
-    import datetime
-    today_str = datetime.datetime.now().strftime("%b %d")  # Es: Feb 23
-    events_today = []
-    for day in get_calendar_data():
-        if today_str in day["date"]:
-            events_today.extend(day["events"])
-    return events_today
-
-def format_event(event):
-    return (
-        f"{event['timeLabel']} - {event['currency']} - {event['name']} "
-        f"(Impact: {event['impactName']})\n"
-        f"Actual: {event.get('actual','N/A')}, "
-        f"Forecast: {event.get('forecast','N/A')}, "
-        f"Previous: {event.get('previous','N/A')}\n"
-        f"Link: https://www.forexfactory.com{event['url']}\n"
-    )
-
+# Test rapido
 if __name__ == "__main__":
-    for ev in get_todays_events():
-        print(format_event(ev))
+    news = get_forexfactory_news()
+    for n in news:
+        print(n)
