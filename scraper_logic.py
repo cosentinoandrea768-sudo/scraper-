@@ -1,31 +1,35 @@
-import requests
+# scraper_logic.py
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone
+from datetime import datetime
+from playwright.sync_api import sync_playwright
 
 FOREX_FACTORY_URL = "https://www.forexfactory.com/calendar?day=today"
 
 def fetch_today_events():
     """
     Restituisce una lista di eventi di oggi medium e high impact.
-    Ogni evento è un dict con:
-    id, name, time, currency, impact
+    Ogni evento è un dict con: id, name, time, currency, impact
     """
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-        }
-        r = requests.get(FOREX_FACTORY_URL, headers=headers)
-        r.raise_for_status()
-    except Exception as e:
-        print("[SCRAPER ERROR]", e)
-        return []
-
-    soup = BeautifulSoup(r.text, "html.parser")
     events = []
 
-    # selezioniamo le righe della tabella eventi
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(FOREX_FACTORY_URL)
+            
+            # aspetta che la pagina sia pronta (JS caricato)
+            page.wait_for_timeout(3000)
+            html = page.content()
+            browser.close()
+    except Exception as e:
+        print("[SCRAPER ERROR] Playwright:", e)
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Seleziona tutte le righe della tabella eventi
     for row in soup.select("tr.calendar__row"):
-        # impatto
         impact_tag = row.select_one("td.calendar__impact span")
         if not impact_tag:
             continue
@@ -33,23 +37,17 @@ def fetch_today_events():
         if impact not in ["medium", "high"]:
             continue
 
-        # valuta
         currency_tag = row.select_one("td.calendar__currency")
         currency = currency_tag.get_text(strip=True) if currency_tag else "N/A"
 
-        # nome evento
         name_tag = row.select_one("td.calendar__event")
         name = name_tag.get_text(strip=True) if name_tag else "N/A"
 
-        # ora evento
         time_tag = row.select_one("td.calendar__time")
         time_text = time_tag.get_text(strip=True) if time_tag else "-"
-        # trasformiamo in formato UTC
         event_time = time_text if time_text != "-" else "-"
 
-        # id univoco
         event_id = f"{currency}_{name}_{event_time}"
-
         events.append({
             "id": event_id,
             "name": name,
@@ -58,7 +56,11 @@ def fetch_today_events():
             "impact": impact
         })
 
+    if not events:
+        print("[SCRAPER INFO] Nessun evento trovato oggi")
+
     return events
+
 
 def format_event_message(event):
     """
