@@ -1,85 +1,84 @@
 # scraper_logic.py
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
-BASE_URL = "https://www.forexfactory.com/calendar.php?week=this"
+FOREX_FACTORY_URL = "https://www.forexfactory.com/calendar?day=today"
 
-def fetch_forex_factory_events():
-    """
-    Restituisce una lista di eventi Forex Factory della settimana corrente,
-    filtrando solo medium e high impact, con previous, forecast e actual.
-    """
-    try:
-        response = requests.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
-        response.raise_for_status()
-    except Exception as e:
-        print("[ERROR] Fetching Forex Factory:", e)
-        return []
+IMPACT_MAP = {
+    "High": "🔴 High Impact",
+    "Medium": "🟠 Medium Impact",
+    "Low": "⚪ Low Impact"
+}
 
-    soup = BeautifulSoup(response.text, "html.parser")
+def fetch_today_events():
+    """
+    Scraping degli eventi di oggi da Forex Factory
+    Restituisce una lista di dizionari:
+    {
+        'time': '14:30',
+        'currency': 'USD',
+        'impact': 'High',
+        'event': 'Nonfarm Payrolls',
+        'actual': '...', 
+        'forecast': '...', 
+        'previous': '...'
+    }
+    """
     events = []
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(FOREX_FACTORY_URL, headers=headers, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        
+        # tutte le righe della calendar table
+        rows = soup.select("tr.calendar__row")
+        for row in rows:
+            impact_tag = row.select_one("td.calendar__impact span")
+            if not impact_tag:
+                continue
+            impact = impact_tag.get("title", "").strip()
+            if impact not in ["Medium", "High"]:
+                continue  # filtra solo medium e high
 
-    # Forex Factory organizza gli eventi in righe della tabella
-    rows = soup.select("tr.calendar__row")
-    today = datetime.now(pytz.timezone("UTC")).date()
+            currency_tag = row.select_one("td.calendar__currency")
+            event_tag = row.select_one("td.calendar__event")
+            time_tag = row.select_one("td.calendar__time")
+            actual_tag = row.select_one("td.calendar__actual")
+            forecast_tag = row.select_one("td.calendar__forecast")
+            previous_tag = row.select_one("td.calendar__previous")
 
-    for row in rows:
-        # Controlla l'impatto
-        impact_span = row.select_one("td.calendar__impact span")
-        if not impact_span:
-            continue
-        impact_class = impact_span.get("class", [])
-        if "medium" in impact_class:
-            impact = "medium"
-        elif "high" in impact_class:
-            impact = "high"
-        else:
-            continue  # salta low impact
+            # se non ci sono dati, metti -
+            actual = actual_tag.text.strip() if actual_tag else "-"
+            forecast = forecast_tag.text.strip() if forecast_tag else "-"
+            previous = previous_tag.text.strip() if previous_tag else "-"
 
-        # Ora e data evento
-        time_td = row.select_one("td.calendar__time")
-        if not time_td:
-            continue
-        event_time_str = time_td.text.strip()
-        if not event_time_str:
-            event_time_str = "00:00"
-
-        # Controlla se l'evento è oggi
-        # Forex Factory mostra la data nel dataset in un td con classe 'calendar__date'
-        date_td = row.select_one("td.calendar__date")
-        if date_td and date_td.text.strip():
-            date_str = date_td.text.strip()
-            try:
-                event_date = datetime.strptime(date_str, "%b %d").replace(year=today.year).date()
-            except:
-                event_date = today
-        else:
-            event_date = today
-
-        if event_date != today:
-            continue
-
-        # Nome evento e valuta
-        name_td = row.select_one("td.calendar__event")
-        currency_td = row.select_one("td.calendar__currency")
-        previous_td = row.select_one("td.calendar__previous")
-        forecast_td = row.select_one("td.calendar__forecast")
-        actual_td = row.select_one("td.calendar__actual")
-
-        event = {
-            "id": row.get("id") or f"{currency_td.text.strip() if currency_td else 'X'}_{name_td.text.strip() if name_td else 'Event'}_{event_date}",
-            "name": name_td.text.strip() if name_td else "Unknown",
-            "currency": currency_td.text.strip() if currency_td else "-",
-            "impact": impact,
-            "date": event_date.strftime("%Y-%m-%d"),
-            "time": event_time_str,
-            "previous": previous_td.text.strip() if previous_td else "-",
-            "forecast": forecast_td.text.strip() if forecast_td else "-",
-            "actual": actual_td.text.strip() if actual_td else "-"
-        }
-
-        events.append(event)
-
+            event = {
+                "time": time_tag.text.strip() if time_tag else "-",
+                "currency": currency_tag.text.strip() if currency_tag else "-",
+                "impact": impact,
+                "event": event_tag.text.strip() if event_tag else "-",
+                "actual": actual,
+                "forecast": forecast,
+                "previous": previous
+            }
+            events.append(event)
+    except Exception as e:
+        print("[SCRAPER ERROR]", e)
+    
     return events
+
+
+def format_event_message(event):
+    """
+    Formatta un singolo evento per Telegram
+    """
+    msg = (
+        f"{IMPACT_MAP.get(event['impact'], '⚪')} | {event['currency']}\n"
+        f"📝 {event['event']}\n"
+        f"⏰ {event['time']}\n"
+        f"Actual: {event['actual']} | Forecast: {event['forecast']} | Previous: {event['previous']}"
+    )
+    return msg
