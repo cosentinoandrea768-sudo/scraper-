@@ -1,63 +1,56 @@
-# -----------------------------
-# logic_impact.py
-# -----------------------------
+import requests
+import re
+import json
+from datetime import datetime
 
-def parse_number(value):
+FOREX_URL = "https://www.forexfactory.com/calendar.php"
+
+def get_forex_news_today():
     """
-    Converte stringhe tipo 0.5%, 1.2K, 3.4M in float
+    Scarica la pagina di ForexFactory e legge la variabile JS
+    window.calendarComponentStates per estrarre le news del giorno corrente.
     """
-    if value is None or value == "-":
-        return None
     try:
-        value = str(value).replace("%", "").replace(",", "").strip()
-        if "K" in value:
-            return float(value.replace("K",""))*1_000
-        if "M" in value:
-            return float(value.replace("M",""))*1_000_000
-        return float(value)
-    except:
-        return None
+        r = requests.get(FOREX_URL)
+        r.raise_for_status()
+        html = r.text
 
-def calculate_surprise(actual, forecast):
-    actual = parse_number(actual)
-    forecast = parse_number(forecast)
-    if actual is None or forecast is None or forecast == 0:
-        return 0
-    return ((actual - forecast)/abs(forecast))*100
+        # Cerca window.calendarComponentStates = {...};
+        match = re.search(r"window\.calendarComponentStates\s*=\s*({.*?});\s*</script>", html, re.DOTALL)
+        if not match:
+            return ["Impossibile trovare la variabile calendarComponentStates nella pagina."]
 
-POSITIVE_WHEN_HIGHER = [
-    "GDP","CPI","Core CPI","Retail Sales","Non Farm Payrolls",
-    "PMI","Interest Rate","Industrial Production"
-]
+        js_obj_str = match.group(1)
 
-POSITIVE_WHEN_LOWER = [
-    "Unemployment Rate","Jobless Claims","Initial Jobless Claims"
-]
+        # Sostituisci eventuali differenze tra JS e JSON
+        js_obj_str = js_obj_str.replace("'", '"')  # cambia apostrofi
+        js_obj_str = re.sub(r'(\w+):', r'"\1":', js_obj_str)  # chiavi senza virgolette
 
-def evaluate_impact(event_name, actual, forecast):
-    actual_num = parse_number(actual)
-    forecast_num = parse_number(forecast)
+        data = json.loads(js_obj_str)
 
-    if actual_num is None or forecast_num is None:
-        return "⚪ Neutro", 0
+        # Giorno corrente UTC
+        today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    surprise = calculate_surprise(actual, forecast)
-    abs_surprise = abs(surprise)
+        events_today = []
+        for day in data["calendar"]["days"]:
+            if day["date"] == today:
+                events_today = day.get("events", [])
+                break
 
-    # Determina se alto o basso è positivo
-    category = "higher"
-    for key in POSITIVE_WHEN_LOWER:
-        if key.lower() in event_name.lower():
-            category = "lower"
-            break
+        if not events_today:
+            return ["Nessun evento trovato oggi."]
 
-    direction = 1 if (category=="higher" and actual_num>forecast_num) or (category=="lower" and actual_num<forecast_num) else -1
+        # Formatta le news
+        messages = ["📊 News Forex di oggi:\n"]
+        for event in events_today:
+            line = f"- {event['prefixedName']} ({event['timeLabel']})"
+            if event.get("forecast"):
+                line += f" | Previsione: {event['forecast']}"
+            if event.get("actual"):
+                line += f" | Attuale: {event['actual']}"
+            messages.append(line)
 
-    # Label forza impatto
-    if abs_surprise > 2:
-        label = "🟢 Strong Positive" if direction>0 else "🔴 Strong Negative"
-    else:
-        label = "🟢 Mild Positive" if direction>0 else "🔴 Mild Negative"
+        return messages
 
-    score = direction * (2 if abs_surprise>2 else 1)
-    return label, score
+    except Exception as e:
+        return [f"Errore durante lo scraping: {e}"]
