@@ -1,75 +1,59 @@
-# scraper_logic.py
+import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
-from playwright.sync_api import sync_playwright
+import json
 
-FOREX_FACTORY_URL = "https://www.forexfactory.com/calendar?day=today"
+FOREX_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 
-def fetch_today_events():
-    """
-    Restituisce una lista di eventi di oggi medium e high impact.
-    Ogni evento è un dict con: id, name, time, currency, impact
-    """
-    events = []
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-            page = browser.new_page()
-            page.goto(FOREX_FACTORY_URL)
-            
-            # aspetta che la pagina sia pronta (JS caricato)
-            page.wait_for_timeout(3000)
-            html = page.content()
-            browser.close()
-    except Exception as e:
-        print("[SCRAPER ERROR] Playwright:", e)
+def get_calendar_data():
+    # Scarica la pagina principale del calendario
+    r = requests.get(FOREX_CALENDAR_URL)
+    r.raise_for_status()
+    
+    soup = BeautifulSoup(r.text, "html.parser")
+    
+    # Cerca lo script contenente window.calendarComponentStates
+    scripts = soup.find_all("script")
+    calendar_json = None
+    for script in scripts:
+        if "window.calendarComponentStates" in script.text:
+            # Estrai il JSON dopo il primo =
+            js_text = script.string
+            start = js_text.find("{")
+            end = js_text.rfind("}") + 1
+            calendar_json = js_text[start:end]
+            break
+    
+    if not calendar_json:
         return []
 
-    soup = BeautifulSoup(html, "html.parser")
+    # Converte la stringa in dizionario Python
+    try:
+        data = json.loads(calendar_json)
+        # La chiave 1 contiene i giorni
+        return data["1"]["days"]
+    except Exception as e:
+        print("Errore parsing JSON:", e)
+        return []
 
-    # Seleziona tutte le righe della tabella eventi
-    for row in soup.select("tr.calendar__row"):
-        impact_tag = row.select_one("td.calendar__impact span")
-        if not impact_tag:
-            continue
-        impact = impact_tag.get("title", "").lower()
-        if impact not in ["medium", "high"]:
-            continue
+def get_todays_events():
+    import datetime
+    today_str = datetime.datetime.now().strftime("%b %d")  # Es: Feb 23
+    events_today = []
+    for day in get_calendar_data():
+        if today_str in day["date"]:
+            events_today.extend(day["events"])
+    return events_today
 
-        currency_tag = row.select_one("td.calendar__currency")
-        currency = currency_tag.get_text(strip=True) if currency_tag else "N/A"
-
-        name_tag = row.select_one("td.calendar__event")
-        name = name_tag.get_text(strip=True) if name_tag else "N/A"
-
-        time_tag = row.select_one("td.calendar__time")
-        time_text = time_tag.get_text(strip=True) if time_tag else "-"
-        event_time = time_text if time_text != "-" else "-"
-
-        event_id = f"{currency}_{name}_{event_time}"
-        events.append({
-            "id": event_id,
-            "name": name,
-            "time": event_time,
-            "currency": currency,
-            "impact": impact
-        })
-
-    if not events:
-        print("[SCRAPER INFO] Nessun evento trovato oggi")
-
-    return events
-
-
-def format_event_message(event):
-    """
-    Restituisce il messaggio pronto per Telegram
-    """
+def format_event(event):
     return (
-        f"📌 Forex Factory Event\n"
-        f"💰 {event['currency']}\n"
-        f"🕒 {event['time']}\n"
-        f"📝 {event['name']}\n"
-        f"⚡ Impact: {event['impact'].capitalize()}"
+        f"{event['timeLabel']} - {event['currency']} - {event['name']} "
+        f"(Impact: {event['impactName']})\n"
+        f"Actual: {event.get('actual','N/A')}, "
+        f"Forecast: {event.get('forecast','N/A')}, "
+        f"Previous: {event.get('previous','N/A')}\n"
+        f"Link: https://www.forexfactory.com{event['url']}\n"
     )
+
+if __name__ == "__main__":
+    for ev in get_todays_events():
+        print(format_event(ev))
