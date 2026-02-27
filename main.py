@@ -1,9 +1,9 @@
 import os
 import asyncio
-import requests
-from bs4 import BeautifulSoup
 from datetime import datetime
+from flask import Flask
 from telegram import Bot
+from scraper_logic import fetch_forex_factory_events
 from logic_impact import evaluate_impact
 
 # ==============================
@@ -17,81 +17,53 @@ if not BOT_TOKEN or not CHAT_ID:
     raise ValueError("BOT_TOKEN o CHAT_ID non impostati")
 
 bot = Bot(token=BOT_TOKEN)
-sent_events = set()
 
 # ==============================
 # FLASK
 # ==============================
-from flask import Flask
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot scraping Forex Factory attivo ✅"
+    return "Bot attivo ✅"
 
 # ==============================
-# SCRAPING FUNZION
+# GLOBAL STATE
 # ==============================
-FF_CALENDAR_URL = "https://www.forexfactory.com/calendar.php?week=this"
-
-def fetch_high_impact_events():
-    """
-    Ritorna una lista di eventi high impact (3 stelle)
-    con struttura:
-    {id, currency, name, time, previous, forecast, actual}
-    """
-    headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(FF_CALENDAR_URL, headers=headers)
-    soup = BeautifulSoup(r.content, "html.parser")
-
-    events = []
-    rows = soup.select("tr.calendar__row")
-    for row in rows:
-        stars = row.select(".impact span.full")
-        if len(stars) != 3:
-            continue  # solo high impact
-
-        currency_tag = row.select_one(".calendar__currency")
-        name_tag = row.select_one(".calendar__event")
-        time_tag = row.select_one(".calendar__time")
-        prev_tag = row.select_one(".calendar__previous")
-        forecast_tag = row.select_one(".calendar__forecast")
-        actual_tag = row.select_one(".calendar__actual")
-
-        if not currency_tag or not name_tag or not time_tag:
-            continue
-
-        event_id = row.get("id") or f"{currency_tag.text.strip()}_{name_tag.text.strip()}_{time_tag.text.strip()}"
-        events.append({
-            "id": event_id,
-            "currency": currency_tag.text.strip(),
-            "name": name_tag.text.strip(),
-            "time": time_tag.text.strip(),
-            "previous": prev_tag.text.strip() if prev_tag else "-",
-            "forecast": forecast_tag.text.strip() if forecast_tag else "-",
-            "actual": actual_tag.text.strip() if actual_tag else "-"
-        })
-
-    return events
+sent_events = set()
 
 # ==============================
-# TELEGRAM
+# INVIO EVENTI
 # ==============================
-async def send_events():
-    events = fetch_high_impact_events()
+async def send_events(today_only=True):
+    events = fetch_forex_factory_events()
+    if today_only:
+        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        events = [e for e in events if e["date"] == today_str]
+
+    if not events:
+        print("[INFO] Nessun evento trovato")
+        return
+
     for event in events:
         if event["id"] in sent_events:
             continue
 
-        impact_label, impact_score = evaluate_impact(event["name"], event["actual"], event["forecast"])
+        # Filtra solo medium e high impact
+        if event["impact"] not in ["medium", "high"]:
+            continue
+
+        label, score = evaluate_impact(event["name"], event.get("actual"), event.get("forecast"))
         message = (
-            f"📊 {event['currency']} – {event['name']}\n"
+            f"📈 {event['impact'].upper()} IMPACT\n"
+            f"{event['currency']} - {event['name']}\n"
             f"🕒 {event['time']}\n"
-            f"Previous: {event['previous']}\n"
-            f"Forecast: {event['forecast']}\n"
-            f"Actual: {event['actual']}\n"
-            f"Impact: {impact_label}"
+            f"Previous: {event.get('previous', '-')}\n"
+            f"Forecast: {event.get('forecast', '-')}\n"
+            f"Actual: {event.get('actual', '-')}\n"
+            f"Impact: {label} (Score: {score})"
         )
+
         try:
             await bot.send_message(chat_id=CHAT_ID, text=message)
             sent_events.add(event["id"])
@@ -103,19 +75,22 @@ async def send_events():
 # SCHEDULER
 # ==============================
 async def scheduler():
-    # Messaggio di avvio
+    # Messaggio di startup
     try:
-        await bot.send_message(chat_id=CHAT_ID, text="🚀 Bot Forex Factory avviato")
-        print("[DEBUG] Messaggio di startup inviato")
+        await bot.send_message(chat_id=CHAT_ID, text="🚀 Bot avviato correttamente - invio eventi di oggi")
     except Exception as e:
         print("[TELEGRAM ERROR] Startup:", e)
 
+    # Primo invio immediato
+    await send_events(today_only=True)
+
+    # Loop continuo ogni 5 minuti
     while True:
         try:
-            await send_events()
+            await send_events(today_only=False)
         except Exception as e:
             print("[LOOP ERROR]", e)
-        await asyncio.sleep(300)  # ogni 5 minuti
+        await asyncio.sleep(300)
 
 # ==============================
 # MAIN
@@ -123,10 +98,11 @@ async def scheduler():
 if __name__ == "__main__":
     from threading import Thread
 
-    # Flask in background
+    # Avvia Flask in background
     def run_flask():
         app.run(host="0.0.0.0", port=PORT)
+
     Thread(target=run_flask).start()
 
-    # Scheduler asyncio
+    # Avvia scheduler
     asyncio.run(scheduler())
