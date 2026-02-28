@@ -4,17 +4,17 @@ from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-from logic_impact import get_forex_news_today  # unica fonte
+from logic_impact import get_forex_news_today  # Playwright-based
 
-# --- Variabili d'ambiente ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+
 if not BOT_TOKEN or not CHAT_ID:
     raise ValueError("Errore: BOT_TOKEN o CHAT_ID non impostati!")
 
 app = Flask(__name__)
 
-# --- Helper: spezza messaggi lunghi per Telegram ---
+# --- Helper per spezzare messaggi lunghi ---
 def split_message(msg, chunk_size=4000):
     return [msg[i:i+chunk_size] for i in range(0, len(msg), chunk_size)]
 
@@ -23,7 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Ciao! Bot attivo. Usa /news per ricevere le news Forex.")
 
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    events = get_forex_news_today(for_week=True)  # settimana prossima
+    events = get_forex_news_today(for_week=True)
     if isinstance(events, list) and events and isinstance(events[0], dict):
         msg = "📊 News Forex settimana prossima:\n"
         for e in events:
@@ -38,15 +38,15 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for chunk in split_message(msg):
         await update.message.reply_text(chunk)
 
-# --- Telegram Application ---
+# --- Application Telegram ---
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("news", news))
 
 # --- Webhook per Render ---
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    data = request.get_json(force=True)
+async def webhook():
+    data = await request.get_json(force=True)
     update = Update.de_json(data, application.bot)
     asyncio.create_task(application.process_update(update))
     return "ok"
@@ -77,19 +77,9 @@ async def send_test_messages():
     except Exception as e:
         print(f"Errore invio messaggi test: {e}")
 
-# --- Avvio Flask + test asincrono ---
+# --- Avvio Flask e invio test ---
 if __name__ == "__main__":
     import threading
-
     port = int(os.environ.get("PORT", 10000))
-
-    # Flask in thread separato
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port)).start()
-
-    # Avvio asincrono Telegram
-    async def main():
-        await application.initialize()   # inizializza il bot
-        await send_test_messages()      # messaggi test
-        await application.start()       # necessario per webhook
-
-    asyncio.run(main())
+    asyncio.run(send_test_messages())
