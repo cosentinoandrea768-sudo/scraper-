@@ -1,11 +1,11 @@
-date,event
-2026-03-01 09:00,Team meeting
-2026-03-01 12:30,Lunch con il team
-2026-03-02 15:00,Webinar su Python
-2026-03-03 10:00,Call con il cliente
-2026-03-04 14:00,Revisione del progetto
-2026-03-05 09:00,Backup settimanale del server
-2026-03-05 16:00,Sessione di brainstorming
-2026-03-06 11:00,Presentazione interna
-2026-03-07 13:30,Pranzo con partner esterno
-2026-03-08 10:30,Workshop di formazione
+DateTime,Currency,Impact,Event,Actual,Forecast,Previous,Detail
+2026-03-01 09:00,USD,High,Non-Farm Payrolls,,200k,180k,Report mensile sull'occupazione negli USA
+2026-03-01 12:30,EUR,Medium,GDP Quarterly,,1.2%,1.0%,Crescita trimestrale del PIL
+2026-03-02 15:00,GBP,High,BoE Interest Rate Decision,,0.5%,0.25%,Decisione sui tassi della Banca d'Inghilterra
+2026-03-03 10:00,JPY,Low,Trade Balance,,+1.0B,+0.8B,Bilancia commerciale giapponese
+2026-03-04 14:00,EUR,Medium,CPI,,2.1%,2.0%,Inflazione al consumo
+2026-03-05 09:00,AUD,High,RBA Cash Rate,,3.0%,2.75%,Decisione sui tassi della Reserve Bank of Australia
+2026-03-05 16:00,CAD,Medium,Employment Change,,15k,20k,Cambio occupazione in Canada
+2026-03-06 11:00,USD,High,FOMC Meeting Minutes,,N/A,N/A,Verbale della riunione della Federal Reserve
+2026-03-07 13:30,NZD,Low,Trade Balance,,+0.2B,+0.1B,Bilancia commerciale Nuova Zelanda
+2026-03-08 10:30,GBP,Medium,CPI,,2.5%,2.4%,Inflazione al consumo UK
