@@ -1,53 +1,76 @@
+# scraper.py
 import requests
+from bs4 import BeautifulSoup
+import json
 from datetime import datetime, timedelta
 
-# Costante per timezone
-TIMEZONE_OFFSET = 1  # Europe/Rome
+# =========================
+# Configurazione
+# =========================
+BASE_URL = "https://www.forexfactory.com/calendar"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+COOKIES = {
+    "ff": "your_forexfactory_cookie_here"  # opzionale, se vuoi simulare login
+}
+TIMEZONE_OFFSET = 1  # ore rispetto UTC
 
-# Endpoint ForexFactory JSON
-FF_URL = "https://npd-api.forexfactory.com/api.php"
+# =========================
+# Funzioni
+# =========================
+def fetch_calendar_page():
+    headers = {"User-Agent": USER_AGENT}
+    resp = requests.get(BASE_URL, headers=headers, cookies=COOKIES, timeout=15)
+    resp.raise_for_status()
+    return resp.text
 
-def get_calendar_events(min_impact="medium"):
-    """
-    Scarica e filtra eventi ForexFactory secondo impatto minimo.
+def parse_calendar_events(html):
+    soup = BeautifulSoup(html, "html.parser")
     
-    Parametri:
-        min_impact: 'low', 'medium', 'high'
+    # Trova lo script con calendarComponentStates
+    script_tag = None
+    for script in soup.find_all("script"):
+        if "calendarComponentStates" in script.text:
+            script_tag = script.text
+            break
+    if not script_tag:
+        raise RuntimeError("Impossibile trovare calendarComponentStates nella pagina")
     
-    Ritorna:
-        lista di eventi coerente con il tuo CSV
-    """
-    impact_map = {"low": 1, "medium": 2, "high": 3}
-    min_level = impact_map.get(min_impact.lower(), 2)
+    # Estrai la parte JSON
+    start = script_tag.find("window.calendarComponentStates[1] =") + len("window.calendarComponentStates[1] =")
+    end = script_tag.find("};", start) + 1
+    json_str = script_tag[start:end]
 
-    events_list = []
-
+    # Converti in dict
     try:
-        resp = requests.get(FF_URL)
-        resp.raise_for_status()
-        data = resp.json()
+        calendar_data = json.loads(json_str.replace("'", '"'))
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Errore parsing JSON: {e}")
 
-        for day in data.get("calendar", []):
-            day_dt = datetime.utcfromtimestamp(day.get("dateline", 0)) + timedelta(hours=TIMEZONE_OFFSET)
-            for ev in day.get("events", []):
-                ev_level = impact_map.get(ev.get("impactName", "low").lower(), 1)
-                if ev_level < min_level:
-                    continue
+    # Estrai eventi giorno per giorno
+    all_events = []
+    for day in calendar_data.get("days", []):
+        day_date = day.get("date")
+        for ev in day.get("events", []):
+            event_info = {
+                "date": day_date,
+                "name": ev.get("name"),
+                "currency": ev.get("currency"),
+                "impact": ev.get("impactClass"),
+                "time": ev.get("timeLabel"),
+                "forecast": ev.get("forecast"),
+                "previous": ev.get("previous"),
+                "actual": ev.get("actual"),
+                "url": f"https://www.forexfactory.com{ev.get('url', '')}"
+            }
+            all_events.append(event_info)
+    return all_events
 
-                events_list.append({
-                    "date": day_dt.strftime("%Y-%m-%d"),
-                    "time": ev.get("timeLabel", ""),
-                    "currency": ev.get("currency", ""),
-                    "impact": ev.get("impactName", "").capitalize(),
-                    "title": ev.get("name", ""),
-                    "forecast": ev.get("forecast", ""),
-                    "previous": ev.get("previous", ""),
-                    "actual": ev.get("actual", ""),
-                    "url": "https://www.forexfactory.com" + ev.get("url", "")
-                })
-
-        return events_list
-
-    except Exception as e:
-        print("[scraper] Errore scraping ForexFactory:", e)
-        return []
+# =========================
+# Test rapido
+# =========================
+if __name__ == "__main__":
+    html = fetch_calendar_page()
+    events = parse_calendar_events(html)
+    print(f"[scraper] Trovati {len(events)} eventi")
+    for ev in events[:10]:  # stampa solo i primi 10 per verifica
+        print(ev)
