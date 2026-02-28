@@ -1,7 +1,7 @@
 import os
 from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, CommandHandler
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from scraper_logic import get_forexfactory_news
 
@@ -14,17 +14,13 @@ if not BOT_TOKEN:
 if not CHAT_ID:
     raise ValueError("Errore: CHAT_ID non impostato!")
 
-bot = Bot(token=BOT_TOKEN)
 app = Flask(__name__)
 
-# Dispatcher per webhook
-dispatcher = Dispatcher(bot, None, workers=0, use_context=True)
+# --- Funzioni Telegram ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Ciao! Il bot è attivo. Usa /news per ricevere le news Forex di oggi.")
 
-# --- Comandi Telegram ---
-def start(update, context):
-    update.message.reply_text("Ciao! Il bot è attivo. Usa /news per ricevere le news Forex di oggi.")
-
-def news(update, context):
+async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     events = get_forexfactory_news()
     if not events:
         msg = "Nessun evento trovato oggi."
@@ -38,19 +34,21 @@ def news(update, context):
                 msg += f"  📊 Attuale: {e['actual']}\n"
             msg += f"  🔗 {e['url']}\n"
 
-    update.message.reply_text(msg)
+    await update.message.reply_text(msg)
 
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("news", news))
+# --- Applicazione Telegram ---
+application = ApplicationBuilder().token(BOT_TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("news", news))
 
 # --- Webhook endpoint per Render ---
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.create_task(application.process_update(update))
     return "ok"
 
-# Endpoint per controlli
+# Endpoint per controllo
 @app.route("/")
 def index():
     return "Bot attivo!"
