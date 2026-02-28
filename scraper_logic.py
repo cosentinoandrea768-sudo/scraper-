@@ -14,7 +14,8 @@ def get_forexfactory_news():
             "prefixedName": "...",
             "timeLabel": "...",
             "forecast": "...",
-            "actual": "..."
+            "actual": "...",
+            "url": "..."
         }, ...
     ]
     """
@@ -40,13 +41,13 @@ def get_forexfactory_news():
 
         # Prendi il giorno corrente (Europe/Rome)
         tz = timezone(timedelta(hours=1))  # Europe/Rome = UTC+1
-        today_str = datetime.now(tz).strftime("%b %d")  # es. "Feb 23"
+        today_str = datetime.now(tz).strftime("%b %d")  # es. "Feb 28"
 
         events_today = []
 
         # data_json è un dict con chiave '1' → giorni
         for day in data_json.get("1", {}).get("days", []):
-            if today_str in day["date"]:
+            if today_str in day.get("date", ""):
                 for event in day.get("events", []):
                     events_today.append({
                         "prefixedName": event.get("prefixedName", "N/A"),
@@ -62,9 +63,3 @@ def get_forexfactory_news():
     except Exception as e:
         print(f"Errore nello scraping delle news: {e}")
         return []
-
-# Test rapido
-if __name__ == "__main__":
-    news = get_forexfactory_news()
-    for n in news:
-        print(n)
