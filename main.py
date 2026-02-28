@@ -2,10 +2,10 @@ import csv
 import asyncio
 from datetime import datetime, timedelta
 from telegram import Bot
+from config import BOT_TOKEN, CHAT_ID, TIMEZONE_OFFSET, CSV_FILE
 from scraper import scrape_and_update_csv
-from config import BOT_TOKEN, CHAT_ID, CSV_FILE, TIMEZONE_OFFSET
 
-async def send_upcoming_events(bot: Bot):
+async def send_upcoming_events(bot):
     now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
     start_next_week = now + timedelta(days=(7 - now.weekday()))
     end_next_week = start_next_week + timedelta(days=7)
@@ -30,14 +30,16 @@ async def send_upcoming_events(bot: Bot):
                     print(f"Messo in coda: {row['Event']}")
 
 async def main():
-    # aggiorna il CSV passando il percorso corretto
+    # Aggiorna CSV prima di leggere
     scrape_and_update_csv(CSV_FILE)
 
     async with Bot(BOT_TOKEN) as bot:
+        # Messaggio di avvio
         await bot.send_message(
             chat_id=CHAT_ID,
             text="🤖 Bot avviato e pronto a inviare eventi HIGH IMPACT USD/EUR della prossima settimana!"
         )
+        # Invia gli eventi filtrati
         await send_upcoming_events(bot)
 
 if __name__ == "__main__":
