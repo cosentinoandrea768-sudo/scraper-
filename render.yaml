@@ -8,6 +8,6 @@ services:
     startCommand: python main.py
     envVars:
       - key: BOT_TOKEN
-        value: "tuo_bot_token"
+        value: ""
       - key: CHAT_ID
-        value: "tuo_chat_id"
+        value: ""
