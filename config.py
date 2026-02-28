@@ -1,13 +1,4 @@
-# ===== TELEGRAM =====
-TELEGRAM_TOKEN = "INSERISCI_IL_TUO_TOKEN"
-CHAT_ID = "INSERISCI_LA_TUA_CHAT_ID"
-
-# ===== SCRAPER =====
-FOREX_FACTORY_URL = "https://www.forexfactory.com/calendar"
-
-# Filtri
-IMPACT_FILTER = ["High"]   # Puoi mettere ["High", "Medium"]
-CURRENCY_FILTER = []       # Es: ["USD", "EUR"]
-
-# Scheduler (minuti)
-CHECK_INTERVAL_MINUTES = 10
+TOKEN = "IL_TUO_TOKEN_BOT"
+CHAT_ID = "IL_TUO_CHAT_ID"
+CSV_FILE = "events.csv"
+TIMEZONE_OFFSET = 1  # ore rispetto a UTC, per convertire date in locale
