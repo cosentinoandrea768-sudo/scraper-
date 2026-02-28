@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from market_calendar_tool import scrape_calendar, clean_calendar_data, Site
 
 
-def get_current_week_events():
+def get_forex_news_today():
     """
     Restituisce lista eventi settimana corrente.
     """
@@ -13,7 +13,7 @@ def get_current_week_events():
     return dataframe_to_list(df)
 
 
-def get_next_week_events():
+def get_forex_news_today():
     """
     Restituisce lista eventi settimana prossima.
     """
