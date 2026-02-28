@@ -1,15 +1,4 @@
-# Telegram
 python-telegram-bot==20.6
-
-# Web server per Render / Webhook
-Flask==2.3.6
-
-# Richieste HTTP e parsing
-requests==2.34.0
-
-# Librerie per scraping di ForexFactory
-market-calendar-tool==0.1.3
-pandas==2.2.1
-
-# Utility generali
-python-dateutil==2.9.2
+Flask==3.1.3
+requests==2.31.0
+demjson3==3.0.6
