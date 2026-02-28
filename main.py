@@ -12,9 +12,14 @@ async def send_upcoming_events(bot):
 
     with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
+        events_sent = 0
         for row in reader:
             if row["Impact"].lower() == "high" and row["Currency"] in ["USD", "EUR"]:
-                event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
+                try:
+                    event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
+                except Exception as e:
+                    print(f"[main] Skipping row {row['Event']} per parsing DateTime: {e}")
+                    continue
                 if start_next_week <= event_time < end_next_week:
                     message = (
                         f"📅 DateTime: {row['DateTime']}\n"
@@ -27,19 +32,18 @@ async def send_upcoming_events(bot):
                         f"Previous: {row['Previous']}"
                     )
                     await bot.send_message(chat_id=CHAT_ID, text=message)
-                    print(f"Messo in coda: {row['Event']}")
+                    events_sent += 1
+                    print(f"[main] Messo in coda: {row['Event']}")
+        print(f"[main] Totale eventi inviati: {events_sent}")
 
 async def main():
-    # Aggiorna CSV prima di leggere
     scrape_and_update_csv(CSV_FILE)
 
     async with Bot(BOT_TOKEN) as bot:
-        # Messaggio di avvio
         await bot.send_message(
             chat_id=CHAT_ID,
             text="🤖 Bot avviato e pronto a inviare eventi HIGH IMPACT USD/EUR della prossima settimana!"
         )
-        # Invia gli eventi filtrati
         await send_upcoming_events(bot)
 
 if __name__ == "__main__":
