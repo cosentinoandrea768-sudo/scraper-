@@ -5,11 +5,11 @@ from datetime import datetime, timezone, timedelta
 
 FOREX_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 
-def get_forexfactory_news(week="this"):
+def get_forex_news(for_week=False):
     """
     Recupera le news dal JS embedded di ForexFactory.
-    Parametri:
-        week: "this" per settimana corrente, "next" per settimana prossima
+    Se for_week=True, restituisce tutte le news della settimana.
+    Altrimenti solo le news di oggi.
     Restituisce una lista di dizionari:
     [
         {
@@ -22,58 +22,55 @@ def get_forexfactory_news(week="this"):
     ]
     """
     try:
-        resp = requests.get(FOREX_CALENDAR_URL, timeout=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/115.0 Safari/537.36"
+        }
+        resp = requests.get(FOREX_CALENDAR_URL, headers=headers, timeout=10)
         resp.raise_for_status()
         html = resp.text
 
         # Cerca la variabile JS window.calendarComponentStates
         pattern = r"window\.calendarComponentStates\s*=\s*(\{.*?\});"
         match = re.search(pattern, html, re.DOTALL)
-
         if not match:
             print("❌ Non ho trovato calendarComponentStates nel JS")
             return []
 
         data_js = match.group(1)
-
-        # Converte JS in JSON valido
+        # Converte in JSON valido (rimuove trailing commas e singoli apici)
         data_json = json.loads(
             re.sub(r",\s*([\]}])", r"\1", data_js.replace("'", '"'))
         )
 
-        # Determina il giorno da leggere
-        tz = timezone(timedelta(hours=1))  # Europe/Rome = UTC+1
-        today = datetime.now(tz)
-        if week == "next":
-            today += timedelta(days=7)
-        today_str = today.strftime("%b %d")  # es. "Feb 28"
+        tz = timezone(timedelta(hours=1))  # Europe/Rome
+        today_str = datetime.now(tz).strftime("%b %d")  # es. "Feb 28"
 
-        events_today = []
+        news_list = []
 
         # data_json è un dict con chiave "1" → giorni
         for day in data_json.get("1", {}).get("days", []):
-            if today_str in day.get("date", ""):
-                for event in day.get("events", []):
-                    events_today.append({
-                        "prefixedName": event.get("prefixedName", "N/A"),
-                        "timeLabel": event.get("timeLabel", "All Day"),
-                        "forecast": event.get("forecast", ""),
-                        "actual": event.get("actual", ""),
-                        "url": f"https://www.forexfactory.com{event.get('soloUrl','')}"
-                    })
-                break
+            day_date = day.get("date", "")
+            if not for_week and today_str not in day_date:
+                continue
 
-        return events_today
+            for event in day.get("events", []):
+                news_list.append({
+                    "prefixedName": event.get("prefixedName", "N/A"),
+                    "timeLabel": event.get("timeLabel", "All Day"),
+                    "forecast": event.get("forecast", ""),
+                    "actual": event.get("actual", ""),
+                    "url": f"https://www.forexfactory.com{event.get('soloUrl','')}"
+                })
+
+        return news_list
 
     except Exception as e:
         print(f"Errore nello scraping delle news: {e}")
         return []
 
-# --- Test rapido ---
+# Test rapido
 if __name__ == "__main__":
-    print("News settimana corrente:")
-    for n in get_forexfactory_news("this"):
-        print(n)
-    print("\nNews settimana prossima:")
-    for n in get_forexfactory_news("next"):
+    news = get_forex_news(for_week=True)
+    for n in news:
         print(n)
