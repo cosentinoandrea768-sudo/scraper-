@@ -1,73 +1,77 @@
+# main.py
+
 import os
 import csv
+import asyncio
 from datetime import datetime, timedelta
-from telegram import Bot
-from telegram.error import TelegramError
+from flask import Flask
 
-# --- CONFIGURAZIONE ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # attenzione allo spazio!
-CHAT_ID = os.environ.get("CHAT_ID")
-TIMEZONE_OFFSET = 0  # se vuoi aggiustare l'orario
-CSV_FILE = "events.csv"  # deve essere nella stessa cartella
-PORT = int(os.environ.get("PORT", 10000))  # fallback a 10000
+from telegram import Bot
+
+# -------------------------
+# CONFIG
+# -------------------------
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", 0))  # default 0
+CSV_FILE = "events.csv"
+
+if not BOT_TOKEN or not CHAT_ID:
+    raise ValueError("Le env var BOT_TOKEN e CHAT_ID devono essere settate!")
 
 bot = Bot(token=BOT_TOKEN)
+app = Flask(__name__)
 
-def send_upcoming_events():
-    """Legge events.csv e manda messaggi per ogni evento futuro."""
+# -------------------------
+# FUNZIONI TELEGRAM
+# -------------------------
+async def send_start_message():
+    """Invia messaggio di avvio del bot"""
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text="🤖 Bot avviato e pronto a inviare eventi dal CSV!"
+    )
+    print("Bot avviato e messaggio di start inviato")
+
+async def send_upcoming_events():
+    """Legge il CSV e invia messaggi per eventi futuri"""
     now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+
     try:
         with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
-                # Controllo DateTime
-                try:
-                    event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
-                except KeyError:
-                    print("Errore: la colonna 'DateTime' non esiste nel CSV.")
-                    return
-                except ValueError:
-                    print(f"Formato DateTime non valido: {row['DateTime']}")
-                    continue
-
-                # Manda solo eventi futuri
+                event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
                 if event_time >= now:
                     message = (
-                        f"📅 Evento imminente:\n"
-                        f"⏰ {row['DateTime']}\n"
-                        f"💱 {row['Currency']} - {row['Impact']}\n"
-                        f"📝 {row['Event']}\n"
-                        f"📊 Forecast: {row['Forecast']}\n"
-                        f"🔹 Previous: {row['Previous']}\n"
-                        f"🖋 Dettagli: {row['Detail']}"
+                        f"📅 {row['DateTime']} | {row['Currency']} | {row['Impact']} | {row['Event']}\n"
+                        f"Detail: {row['Detail']}\n"
+                        f"Actual: {row['Actual']} | Forecast: {row['Forecast']} | Previous: {row['Previous']}"
                     )
-                    try:
-                        bot.send_message(chat_id=CHAT_ID, text=message)
-                        print(f"Messo in coda: {row['Event']}")
-                    except TelegramError as e:
-                        print(f"Errore Telegram: {e}")
+                    await bot.send_message(chat_id=CHAT_ID, text=message)
+                    print(f"Messo in coda: {row['Event']}")
     except FileNotFoundError:
-        print(f"Errore: {CSV_FILE} non trovato!")
+        print(f"Errore: il file CSV '{CSV_FILE}' non esiste nella cartella corrente")
+    except KeyError as e:
+        print(f"Errore: la colonna '{e.args[0]}' non esiste nel CSV")
+
+# -------------------------
+# FLASK PER KEEP-ALIVE
+# -------------------------
+@app.route("/")
+def index():
+    return "Bot Telegram operativo!"
+
+# -------------------------
+# MAIN
+# -------------------------
+async def main():
+    await send_start_message()
+    await send_upcoming_events()
 
 if __name__ == "__main__":
-    print("Bot avviato...")
+    # Avvia async main
+    asyncio.run(main())
 
-    # --- TEST MESSAGGIO DI AVVIO ---
-    try:
-        bot.send_message(chat_id=CHAT_ID, text="🤖 Bot avviato e pronto a inviare eventi dal CSV!")
-    except TelegramError as e:
-        print(f"Errore invio messaggio di avvio: {e}")
-
-    # --- INVIO EVENTI DAL CSV ---
-    send_upcoming_events()
-
-    # --- Se vuoi aggiungere webhook su Render ---
-    # Render mostra avviso se non c'è server web, quindi possiamo aprire una porta dummy
-    from flask import Flask
-    app = Flask(__name__)
-
-    @app.route("/")
-    def index():
-        return "Bot attivo!", 200
-
-    app.run(host="0.0.0.0", port=PORT)
+    # Avvia Flask su porta 10000
+    app.run(host="0.0.0.0", port=10000)
