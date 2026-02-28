@@ -2,13 +2,8 @@ import csv
 import asyncio
 from datetime import datetime, timedelta
 from telegram import Bot
-import os
-from scraper import scrape_and_update_csv  # aggiorna il csv prima
-
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-CSV_FILE = "events.csv"
-TIMEZONE_OFFSET = 1
+from scraper import scrape_and_update_csv
+from config import BOT_TOKEN, CHAT_ID, CSV_FILE, TIMEZONE_OFFSET
 
 async def send_upcoming_events(bot: Bot):
     now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
@@ -35,7 +30,9 @@ async def send_upcoming_events(bot: Bot):
                     print(f"Messo in coda: {row['Event']}")
 
 async def main():
-    scrape_and_update_csv()  # aggiorna CSV prima di leggere
+    # aggiorna il CSV passando il percorso corretto
+    scrape_and_update_csv(CSV_FILE)
+
     async with Bot(BOT_TOKEN) as bot:
         await bot.send_message(
             chat_id=CHAT_ID,
