@@ -50,7 +50,7 @@ def send_telegram_message(text):
     except Exception as e:
         logging.error(f"Errore invio Telegram: {e}")
 
-def check_news():
+def check_news(initial=False):
     news = fetch_forex_news()
     for event in news:
         event_id = event.get("id")
@@ -72,6 +72,10 @@ def check_news():
             f"⏰ {event_time}"
         )
 
+        # Se è il primo invio all'avvio, aggiungi prefisso "SETTIMANA"
+        if initial:
+            message = "📌 *NEWS HIGH IMPACT QUESTA SETTIMANA*\n" + message
+
         send_telegram_message(message)
         sent_events.add(event_id)
 
@@ -79,7 +83,7 @@ def check_news():
 scheduler = BackgroundScheduler(timezone=pytz.utc)
 scheduler.add_job(check_news, 'interval', minutes=5)
 scheduler.start()
-logging.info("Bot avviato e scheduler pronto. Controllo ogni 5 minuti.")
+logging.info("Scheduler avviato. Controllo news ogni 5 minuti.")
 
 # ================= FLASK WEB SERVER =================
 app = Flask(__name__)
@@ -89,5 +93,12 @@ def home():
     return "Forex Telegram Bot è attivo!"
 
 if __name__ == "__main__":
+    # Invio messaggio di avvio
+    send_telegram_message("🚀 Bot avviato correttamente! Controllo news High Impact questa settimana...")
+
+    # Invia tutte le news High Impact già presenti
+    check_news(initial=True)
+
+    # Avvia Flask su porta dinamica
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
