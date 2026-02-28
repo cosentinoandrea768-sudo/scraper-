@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: forex-bot
+    env: python
+    plan: free
+    region: oregon
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT_TOKEN
+        value: "tuo_bot_token"
+      - key: CHAT_ID
+        value: "tuo_chat_id"
