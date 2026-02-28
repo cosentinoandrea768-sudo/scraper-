@@ -3,7 +3,7 @@ from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-from scraper_logic import get_forexfactory_news
+from scraper_logic import get_forexfactory_news  # funzione JS -> JSON
 
 # Variabili d'ambiente
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -48,12 +48,38 @@ def webhook():
     application.create_task(application.process_update(update))
     return "ok"
 
-# Endpoint per controllo
+# Endpoint di controllo
 @app.route("/")
 def index():
     return "Bot attivo!"
 
+# --- Funzione per test di invio diretto ---
+async def send_test_messages():
+    try:
+        bot = application.bot
+        # Messaggio di test
+        await bot.send_message(chat_id=CHAT_ID, text="✅ Bot attivo! Messaggio di test.")
+        # Prova news della settimana prossima
+        events = get_forexfactory_news(week="next")  # modifica funzione per supportare settimana prossima
+        if events:
+            msg = "📊 Prova: News Forex settimana prossima:\n"
+            for e in events:
+                msg += f"- {e['prefixedName']} ({e['timeLabel']})\n"
+                if e['forecast']:
+                    msg += f"  📈 Previsione: {e['forecast']}\n"
+                if e['actual']:
+                    msg += f"  📊 Attuale: {e['actual']}\n"
+                msg += f"  🔗 {e['url']}\n"
+            await bot.send_message(chat_id=CHAT_ID, text=msg)
+    except Exception as e:
+        print(f"Errore invio messaggi test: {e}")
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"Bot in ascolto su porta {port}")
-    app.run(host="0.0.0.0", port=port)
+    # Avvio Flask
+    from threading import Thread
+    Thread(target=lambda: app.run(host="0.0.0.0", port=port)).start()
+    # Avvio Application asincrono
+    import asyncio
+    asyncio.run(send_test_messages())
