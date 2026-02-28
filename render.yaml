@@ -1,12 +1,10 @@
 services:
   - type: web
     name: forex-bot
-    env: python
-    pythonVersion: 3.11  # <- downgrade qui
+    env: docker
     plan: free
     region: oregon
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: python main.py
+    # Non serve buildCommand/startCommand, Docker li gestisce
     envVars:
       - key: BOT_TOKEN
         value: ""
