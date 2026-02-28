@@ -1,5 +1,4 @@
-python-telegram-bot==20.6
-requests
-beautifulsoup4
-apscheduler
-flask
+pandas==1.3.5
+selenium==4.13.0
+webdriver_manager==4.0.2
+pytz
