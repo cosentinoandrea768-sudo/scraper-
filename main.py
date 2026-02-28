@@ -1,38 +1,61 @@
 import csv
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from telegram import Bot
-from telegram.error import TelegramError
-import time
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# --- CONFIG ---
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
-CSV_FILE = "./events.csv"  # Assicurati che sia nella stessa cartella di main.py
-TIMEZONE_OFFSET = 1  # esempio: +1 per CET
-CHECK_INTERVAL = 60  # in secondi, quanto spesso controllare gli eventi imminenti
+CSV_FILE = "events.csv"
+CHAT_ID = "IL_TUO_CHAT_ID"
+TOKEN = "IL_TUO_BOT_TOKEN"
+TIMEZONE_OFFSET = 1  # adatta se vuoi UTC+1
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=TOKEN)
+
+def send_all_events():
+    """Invia tutte le righe del CSV su Telegram."""
+    with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            message = (
+                f"📅 {row['DateTime']}\n"
+                f"💱 {row['Currency']}\n"
+                f"⚡ Impact: {row['Impact']}\n"
+                f"📰 Event: {row['Event']}\n"
+                f"🔹 Actual: {row['Actual']}\n"
+                f"🔹 Forecast: {row['Forecast']}\n"
+                f"🔹 Previous: {row['Previous']}\n"
+                f"🔗 Details: {row['Detail']}"
+            )
+            bot.send_message(chat_id=CHAT_ID, text=message)
 
 def send_upcoming_events():
-    now = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
+    """Invia solo eventi imminenti (schedulazione normale)."""
+    now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
     with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
-        reader = csv.DictReader(csvfile, delimiter='\t')  # usa tab se il CSV è tab-delimited
+        reader = csv.DictReader(csvfile)
         for row in reader:
-            event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
-            if 0 <= (event_time - now).total_seconds() <= CHECK_INTERVAL:
+            event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M:%S")
+            if 0 <= (event_time - now).total_seconds() <= 3600:  # prossima ora
                 message = (
-                    f"Evento imminente:\n"
-                    f"{row['Currency']} - {row['Event']}\n"
-                    f"Impact: {row['Impact']}\n"
-                    f"Actual: {row['Actual']}, Forecast: {row['Forecast']}, Previous: {row['Previous']}"
+                    f"📅 {row['DateTime']}\n"
+                    f"💱 {row['Currency']}\n"
+                    f"⚡ Impact: {row['Impact']}\n"
+                    f"📰 Event: {row['Event']}\n"
+                    f"🔹 Actual: {row['Actual']}\n"
+                    f"🔹 Forecast: {row['Forecast']}\n"
+                    f"🔹 Previous: {row['Previous']}\n"
+                    f"🔗 Details: {row['Detail']}"
                 )
-                try:
-                    bot.send_message(chat_id=CHAT_ID, text=message)
-                except TelegramError as e:
-                    print(f"Errore invio messaggio: {e}")
+                bot.send_message(chat_id=CHAT_ID, text=message)
 
-if __name__ == "__main__":
-    print("Bot avviato...")
-    while True:
-        send_upcoming_events()
-        time.sleep(CHECK_INTERVAL)
+# Messaggio di avvio
+bot.send_message(chat_id=CHAT_ID, text="🤖 Bot avviato! Inizio test invio eventi...")
+
+# Invia tutte le news subito
+send_all_events()
+
+# Scheduler per eventi futuri
+scheduler = BackgroundScheduler()
+scheduler.add_job(send_upcoming_events, "interval", minutes=10)
+scheduler.start()
+
+print("Bot avviato e scheduler attivo!")
