@@ -1,77 +1,51 @@
-# main.py
-
-import os
 import csv
-import asyncio
 from datetime import datetime, timedelta
+import os
+from telegram import Bot
 from flask import Flask
 
-from telegram import Bot
+# ================= CONFIG =================
+BOT_TOKEN = os.getenv("BOT_TOKEN")   # variabile ambiente
+CHAT_ID = os.getenv("CHAT_ID")       # variabile ambiente
+TIMEZONE_OFFSET = 1                  # ore di offset rispetto UTC
+CSV_FILE = "events.csv"              # nome del CSV
+# ========================================
 
-# -------------------------
-# CONFIG
-# -------------------------
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", 0))  # default 0
-CSV_FILE = "events.csv"
-
-if not BOT_TOKEN or not CHAT_ID:
-    raise ValueError("Le env var BOT_TOKEN e CHAT_ID devono essere settate!")
-
-bot = Bot(token=BOT_TOKEN)
 app = Flask(__name__)
+bot = Bot(token=BOT_TOKEN)
 
-# -------------------------
-# FUNZIONI TELEGRAM
-# -------------------------
-async def send_start_message():
-    """Invia messaggio di avvio del bot"""
-    await bot.send_message(
-        chat_id=CHAT_ID,
-        text="🤖 Bot avviato e pronto a inviare eventi dal CSV!"
-    )
-    print("Bot avviato e messaggio di start inviato")
-
-async def send_upcoming_events():
-    """Legge il CSV e invia messaggi per eventi futuri"""
+def send_upcoming_events():
     now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+    
+    with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            # FILTRO: High Impact solo per USD o EUR
+            if row["Impact"] != "High" or row["Currency"] not in ["USD", "EUR"]:
+                continue
+            
+            event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
+            # Ignora eventi passati
+            if event_time < now:
+                continue
 
-    try:
-        with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
-                if event_time >= now:
-                    message = (
-                        f"📅 {row['DateTime']} | {row['Currency']} | {row['Impact']} | {row['Event']}\n"
-                        f"Detail: {row['Detail']}\n"
-                        f"Actual: {row['Actual']} | Forecast: {row['Forecast']} | Previous: {row['Previous']}"
-                    )
-                    await bot.send_message(chat_id=CHAT_ID, text=message)
-                    print(f"Messo in coda: {row['Event']}")
-    except FileNotFoundError:
-        print(f"Errore: il file CSV '{CSV_FILE}' non esiste nella cartella corrente")
-    except KeyError as e:
-        print(f"Errore: la colonna '{e.args[0]}' non esiste nel CSV")
-
-# -------------------------
-# FLASK PER KEEP-ALIVE
-# -------------------------
-@app.route("/")
-def index():
-    return "Bot Telegram operativo!"
-
-# -------------------------
-# MAIN
-# -------------------------
-async def main():
-    await send_start_message()
-    await send_upcoming_events()
+            message = (
+                f"📅 {row['DateTime']} | {row['Currency']} | {row['Impact']} | {row['Event']}\n"
+                f"Detail: {row['Detail']}\n"
+                f"Actual: {row['Actual']} | Forecast: {row['Forecast']} | Previous: {row['Previous']}"
+            )
+            bot.send_message(chat_id=CHAT_ID, text=message)
+            print(f"Messo in coda: {row['Event']}")
 
 if __name__ == "__main__":
-    # Avvia async main
-    asyncio.run(main())
+    bot.send_message(chat_id=CHAT_ID, text="🤖 Bot avviato e pronto a inviare eventi HIGH IMPACT USD/EUR dal CSV!")
+    print("Bot avviato...")
 
-    # Avvia Flask su porta 10000
+    send_upcoming_events()
+
+    # Flask app per mantenere il processo live su Render
+    @app.route("/")
+    def index():
+        return "Bot Telegram attivo! 🚀"
+
     app.run(host="0.0.0.0", port=10000)
