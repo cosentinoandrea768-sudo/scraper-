@@ -5,7 +5,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 
 # --- CONFIGURAZIONE ---
-BOT_TOKEN = os.environ.get("BOT :TOKEN")  # attenzione allo spazio!
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # attenzione allo spazio!
 CHAT_ID = os.environ.get("CHAT_ID")
 TIMEZONE_OFFSET = 0  # se vuoi aggiustare l'orario
 CSV_FILE = "events.csv"  # deve essere nella stessa cartella
