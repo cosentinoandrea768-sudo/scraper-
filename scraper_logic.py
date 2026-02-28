@@ -1,82 +1,57 @@
-import requests
-import re
-import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
+from market_calendar_tool import scrape_calendar, clean_calendar_data, Site
 
-FOREX_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 
-def get_forex_news(for_week=False):
+def get_current_week_events():
     """
-    Recupera le news dal JS embedded di ForexFactory.
-    Se for_week=True, restituisce tutte le news della settimana.
-    Altrimenti solo le news di oggi.
-    Restituisce una lista di dizionari:
-    [
-        {
-            "prefixedName": "...",
-            "timeLabel": "...",
-            "forecast": "...",
-            "actual": "...",
-            "url": "..."
-        }, ...
-    ]
+    Restituisce lista eventi settimana corrente.
     """
-    try:
-        # Sessione persistente
-        session = requests.Session()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/115.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer": "https://www.forexfactory.com/"
-        }
+    raw = scrape_calendar(site=Site.FOREXFACTORY, extended=True)
+    cleaned = clean_calendar_data(raw)
+    df = cleaned.base
 
-        resp = session.get(FOREX_CALENDAR_URL, headers=headers, timeout=10)
-        resp.raise_for_status()
-        html = resp.text
+    return dataframe_to_list(df)
 
-        # Cerca la variabile JS window.calendarComponentStates
-        pattern = r"window\.calendarComponentStates\s*=\s*(\{.*?\});"
-        match = re.search(pattern, html, re.DOTALL)
-        if not match:
-            print("❌ Non ho trovato calendarComponentStates nel JS")
-            return []
 
-        data_js = match.group(1)
-        # Converte in JSON valido (rimuove trailing commas e singoli apici)
-        data_json = json.loads(
-            re.sub(r",\s*([\]}])", r"\1", data_js.replace("'", '"'))
-        )
+def get_next_week_events():
+    """
+    Restituisce lista eventi settimana prossima.
+    """
+    today = datetime.utcnow()
 
-        tz = timezone(timedelta(hours=1))  # Europe/Rome
-        today_str = datetime.now(tz).strftime("%b %d")  # es. "Feb 28"
+    # Calcolo prossimo lunedì
+    next_monday = today + timedelta(days=(7 - today.weekday()))
+    next_sunday = next_monday + timedelta(days=6)
 
-        news_list = []
+    raw = scrape_calendar(
+        site=Site.FOREXFACTORY,
+        date_from=next_monday.strftime("%Y-%m-%d"),
+        date_to=next_sunday.strftime("%Y-%m-%d"),
+        extended=True
+    )
 
-        # data_json è un dict con chiave "1" → giorni
-        for day in data_json.get("1", {}).get("days", []):
-            day_date = day.get("date", "")
-            if not for_week and today_str not in day_date:
-                continue
+    cleaned = clean_calendar_data(raw)
+    df = cleaned.base
 
-            for event in day.get("events", []):
-                news_list.append({
-                    "prefixedName": event.get("prefixedName", "N/A"),
-                    "timeLabel": event.get("timeLabel", "All Day"),
-                    "forecast": event.get("forecast", ""),
-                    "actual": event.get("actual", ""),
-                    "url": f"https://www.forexfactory.com{event.get('soloUrl','')}"
-                })
+    return dataframe_to_list(df)
 
-        return news_list
 
-    except Exception as e:
-        print(f"Errore nello scraping delle news: {e}")
+def dataframe_to_list(df):
+    """
+    Converte DataFrame in lista di dict semplificata
+    pronta per Telegram.
+    """
+    if df.empty:
         return []
 
-# Test rapido
-if __name__ == "__main__":
-    news = get_forex_news(for_week=True)
-    for n in news:
-        print(n)
+    events = []
+
+    for _, row in df.iterrows():
+        events.append({
+            "date": row.get("Date", ""),
+            "time": row.get("Time", ""),
+            "event": row.get("Event", ""),
+            "impact": row.get("Impact", ""),
+        })
+
+    return events
