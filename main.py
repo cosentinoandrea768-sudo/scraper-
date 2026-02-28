@@ -4,8 +4,9 @@ from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-from logic_impact import get_forex_news_today  # nome coerente
+from logic_impact import get_forex_news_today  # funzione coerente per oggi o settimana prossima
 
+# --- Config Telegram ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
@@ -13,6 +14,7 @@ if not BOT_TOKEN or not CHAT_ID:
     raise ValueError("Errore: BOT_TOKEN o CHAT_ID non impostati!")
 
 app = Flask(__name__)
+application = ApplicationBuilder().token(BOT_TOKEN).build()
 
 # --- Helper per spezzare messaggi lunghi ---
 def split_message(msg, chunk_size=4000):
@@ -35,11 +37,11 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"  🔗 {e['url']}\n"
     else:
         msg = "\n".join(events)
+
     for chunk in split_message(msg):
         await update.message.reply_text(chunk)
 
-# --- Application ---
-application = ApplicationBuilder().token(BOT_TOKEN).build()
+# --- Handler ---
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("news", news))
 
@@ -47,14 +49,21 @@ application.add_handler(CommandHandler("news", news))
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
-    application.create_task(application.process_update(update))
+    asyncio.create_task(application.process_update(update))
     return "ok"
 
+# --- Endpoint principale ---
 @app.route("/")
 def index():
     return "Bot attivo!"
 
-# --- Funzione test invio messaggi ---
+# --- Endpoint per test di invio messaggi ---
+@app.route("/test")
+def test_messages():
+    asyncio.create_task(send_test_messages())
+    return "Messaggi di test inviati!"
+
+# --- Funzione async per inviare messaggi di test ---
 async def send_test_messages():
     bot = application.bot
     try:
@@ -80,9 +89,7 @@ async def send_test_messages():
     except Exception as e:
         print(f"Errore invio messaggi test: {e}")
 
-# --- Avvio ---
+# --- Avvio Flask ---
 if __name__ == "__main__":
-    import threading
     port = int(os.environ.get("PORT", 10000))
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port)).start()
-    asyncio.run(send_test_messages())
+    app.run(host="0.0.0.0", port=port)
