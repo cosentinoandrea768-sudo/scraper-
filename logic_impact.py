@@ -1,4 +1,4 @@
-import requests
+ùimport requests
 import re
 import json
 from datetime import datetime, timezone, timedelta
@@ -10,6 +10,7 @@ def get_forex_news_today(for_week=False):
     Recupera le news dal JS embedded di ForexFactory.
     for_week=False -> news di oggi
     for_week=True  -> news della settimana (usata per test settimana prossima)
+    Restituisce lista di dict pronti per Telegram.
     """
     try:
         headers = {
@@ -20,20 +21,19 @@ def get_forex_news_today(for_week=False):
         resp.raise_for_status()
         html = resp.text
 
-        # Cerca window.calendarComponentStates = {...};
+        # Cerca JS embedded: window.calendarComponentStates = {...};
         pattern = r"window\.calendarComponentStates\s*=\s*(\{.*?\});"
         match = re.search(pattern, html, re.DOTALL)
         if not match:
             return ["❌ Impossibile trovare calendarComponentStates nella pagina."]
 
         js_obj_str = match.group(1)
-        # Trasforma JS in JSON
-        js_obj_str = js_obj_str.replace("'", '"')
-        js_obj_str = re.sub(r'(\w+):', r'"\1":', js_obj_str)  # chiavi senza virgolette
+        js_obj_str = js_obj_str.replace("'", '"')               # apostrofi → virgolette
+        js_obj_str = re.sub(r'(\w+):', r'"\1":', js_obj_str)   # chiavi senza virgolette
         data = json.loads(js_obj_str)
 
         tz = timezone(timedelta(hours=1))  # Europe/Rome
-        today_str = datetime.now(tz).strftime("%b %d")
+        today_str = datetime.now(tz).strftime("%b %d")        # es. "Feb 28"
 
         news_list = []
         for day in data.get("1", {}).get("days", []):
@@ -48,8 +48,11 @@ def get_forex_news_today(for_week=False):
                     "actual": event.get("actual", ""),
                     "url": f"https://www.forexfactory.com{event.get('soloUrl','')}"
                 })
+
         if not news_list:
             return ["Nessun evento trovato."]
+
         return news_list
+
     except Exception as e:
         return [f"Errore nello scraping: {e}"]
