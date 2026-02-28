@@ -1,4 +1,4 @@
-import requests
+from playwright.sync_api import sync_playwright
 import re
 import json
 from datetime import datetime, timezone, timedelta
@@ -7,82 +7,38 @@ FOREX_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 
 def get_forex_news_today(for_week=False):
     """
-    Recupera le news leggendo la variabile JS:
-    window.calendarComponentStates
-    Versione robusta per produzione.
+    Recupera le news dal JS embedded di ForexFactory.
+    for_week=False -> news di oggi
+    for_week=True  -> news della settimana (test settimana prossima)
     """
-
     try:
-        session = requests.Session()
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(FOREX_CALENDAR_URL)
+            html = page.content()
+            browser.close()
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/122.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.forexfactory.com/"
-        }
-
-        session.headers.update(headers)
-
-        # Prima visita homepage per ottenere cookie
-        session.get("https://www.forexfactory.com", timeout=10)
-
-        # Poi calendario
-        response = session.get(FOREX_CALENDAR_URL, timeout=10)
-
-        if response.status_code != 200:
-            return [f"Errore HTTP: {response.status_code}"]
-
-        html = response.text
-
-        # Estrazione robusta della variabile JS
-        match = re.search(
-            r"window\.calendarComponentStates\s*=\s*(\{.*?\})\s*;",
-            html,
-            re.DOTALL
-        )
-
+        # Cerca la variabile JS window.calendarComponentStates
+        pattern = r"window\.calendarComponentStates\s*=\s*(\{.*?\});"
+        match = re.search(pattern, html, re.DOTALL)
         if not match:
-            return ["❌ calendarComponentStates non trovata."]
+            return ["❌ Impossibile trovare calendarComponentStates nella pagina."]
 
-        js_data = match.group(1)
+        js_obj_str = match.group(1)
+        js_obj_str = js_obj_str.replace("'", '"')
+        js_obj_str = re.sub(r'(\w+):', r'"\1":', js_obj_str)  # chiavi senza virgolette
+        data = json.loads(js_obj_str)
 
-        # Parsing JSON sicuro
-        try:
-            data = json.loads(js_data)
-        except json.JSONDecodeError:
-            return ["❌ Errore parsing JSON interno ForexFactory."]
-
-        # Timezone Europa/Roma
-        tz = timezone(timedelta(hours=1))
-        today = datetime.now(tz).date()
+        tz = timezone(timedelta(hours=1))  # Europe/Rome
+        today_str = datetime.now(tz).strftime("%b %d")  # es. "Feb 28"
 
         news_list = []
-
-        # Struttura tipica: data["1"]["days"]
-        for day_block in data.get("1", {}).get("days", []):
-
-            day_str = day_block.get("date", "")
-
-            # Parsing data tipo "Fri Feb 28"
-            try:
-                parsed_date = datetime.strptime(
-                    f"{day_str} {today.year}",
-                    "%a %b %d %Y"
-                ).date()
-            except:
+        for day in data.get("1", {}).get("days", []):
+            day_date = day.get("date", "")
+            if not for_week and today_str not in day_date:
                 continue
-
-            if not for_week and parsed_date != today:
-                continue
-
-            if for_week:
-                if parsed_date < today or parsed_date > today + timedelta(days=7):
-                    continue
-
-            for event in day_block.get("events", []):
-
+            for event in day.get("events", []):
                 news_list.append({
                     "prefixedName": event.get("prefixedName", "N/A"),
                     "timeLabel": event.get("timeLabel", "All Day"),
@@ -90,10 +46,8 @@ def get_forex_news_today(for_week=False):
                     "actual": event.get("actual", ""),
                     "url": f"https://www.forexfactory.com{event.get('soloUrl','')}"
                 })
-
         if not news_list:
             return ["Nessun evento trovato."]
-
         return news_list
 
     except Exception as e:
