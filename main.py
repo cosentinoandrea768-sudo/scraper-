@@ -2,6 +2,7 @@ import os
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import asyncio
 
 from scraper_logic import get_forexfactory_news  # funzione JS -> JSON
 
@@ -18,23 +19,32 @@ app = Flask(__name__)
 
 # --- Funzioni Telegram ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Ciao! Il bot è attivo. Usa /news per ricevere le news Forex di oggi.")
+    await update.message.reply_text(
+        "Ciao! Il bot è attivo. Usa /news per ricevere le news Forex di oggi."
+    )
 
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    events = get_forexfactory_news()
+    events = get_forexfactory_news(week="this")
     if not events:
         msg = "Nessun evento trovato oggi."
-    else:
-        msg = "📊 News Forex di oggi:\n"
-        for e in events:
-            msg += f"- {e['prefixedName']} ({e['timeLabel']})\n"
-            if e['forecast']:
-                msg += f"  📈 Previsione: {e['forecast']}\n"
-            if e['actual']:
-                msg += f"  📊 Attuale: {e['actual']}\n"
-            msg += f"  🔗 {e['url']}\n"
+        await update.message.reply_text(msg)
+        return
 
-    await update.message.reply_text(msg)
+    msg = "📊 News Forex di oggi:\n"
+    for e in events:
+        msg += f"- {e['prefixedName']} ({e['timeLabel']})\n"
+        if e['forecast']:
+            msg += f"  📈 Previsione: {e['forecast']}\n"
+        if e['actual']:
+            msg += f"  📊 Attuale: {e['actual']}\n"
+        msg += f"  🔗 {e['url']}\n"
+
+        # Telegram limite 4096 caratteri
+        if len(msg) > 4000:
+            await update.message.reply_text(msg)
+            msg = ""
+    if msg:
+        await update.message.reply_text(msg)
 
 # --- Applicazione Telegram ---
 application = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -45,7 +55,7 @@ application.add_handler(CommandHandler("news", news))
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
-    application.create_task(application.process_update(update))
+    asyncio.ensure_future(application.process_update(update))
     return "ok"
 
 # Endpoint di controllo
@@ -59,8 +69,9 @@ async def send_test_messages():
         bot = application.bot
         # Messaggio di test
         await bot.send_message(chat_id=CHAT_ID, text="✅ Bot attivo! Messaggio di test.")
-        # Prova news della settimana prossima
-        events = get_forexfactory_news(week="next")  # modifica funzione per supportare settimana prossima
+
+        # Prova: news settimana prossima
+        events = get_forexfactory_news(week="next")
         if events:
             msg = "📊 Prova: News Forex settimana prossima:\n"
             for e in events:
@@ -70,16 +81,22 @@ async def send_test_messages():
                 if e['actual']:
                     msg += f"  📊 Attuale: {e['actual']}\n"
                 msg += f"  🔗 {e['url']}\n"
-            await bot.send_message(chat_id=CHAT_ID, text=msg)
+
+                if len(msg) > 4000:
+                    await bot.send_message(chat_id=CHAT_ID, text=msg)
+                    msg = ""
+            if msg:
+                await bot.send_message(chat_id=CHAT_ID, text=msg)
     except Exception as e:
         print(f"Errore invio messaggi test: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"Bot in ascolto su porta {port}")
-    # Avvio Flask
+    
+    # Avvio Flask in thread
     from threading import Thread
     Thread(target=lambda: app.run(host="0.0.0.0", port=port)).start()
-    # Avvio Application asincrono
-    import asyncio
+    
+    # Avvio invio test messaggi
     asyncio.run(send_test_messages())
