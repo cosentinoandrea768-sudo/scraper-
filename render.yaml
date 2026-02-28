@@ -1,8 +1,13 @@
 services:
   - type: web
-    name: forex-factory-bot
-    env: python
+    name: forex-telegram-bot
+    runtime: python
     plan: free
-    runtime: python3.11
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      playwright install chromium
     startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
