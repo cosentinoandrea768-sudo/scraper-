@@ -1,54 +1,61 @@
 import os
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from scraper_logic import get_forex_news_today
-from aiohttp import web
+from flask import Flask, request
+from telegram import Bot, Update
+from telegram.ext import Dispatcher, CommandHandler
 
+from scraper_logic import get_forexfactory_news
+
+# Variabili d'ambiente
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-PORT = int(os.getenv("PORT", 10000))  # Porta Render
 
-if not BOT_TOKEN or not CHAT_ID:
-    raise ValueError("Imposta BOT_TOKEN e CHAT_ID nelle variabili d'ambiente!")
+if not BOT_TOKEN:
+    raise ValueError("Errore: BOT_TOKEN non impostato!")
+if not CHAT_ID:
+    raise ValueError("Errore: CHAT_ID non impostato!")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Ciao! Il bot è attivo. Usa /news per ricevere le ultime news Forex."
-    )
+bot = Bot(token=BOT_TOKEN)
+app = Flask(__name__)
 
-async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    messages = get_forex_news_today()
-    for msg in messages:
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+# Dispatcher per webhook
+dispatcher = Dispatcher(bot, None, workers=0, use_context=True)
 
-async def handle(request):
-    """Gestisce le richieste POST del webhook."""
-    body = await request.text()
-    update = Update.de_json(json.loads(body), app.bot)
-    await app.update_queue.put(update)
-    return web.Response(text="OK")
+# --- Comandi Telegram ---
+def start(update, context):
+    update.message.reply_text("Ciao! Il bot è attivo. Usa /news per ricevere le news Forex di oggi.")
 
-# --- Main ---
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("news", news))
+def news(update, context):
+    events = get_forexfactory_news()
+    if not events:
+        msg = "Nessun evento trovato oggi."
+    else:
+        msg = "📊 News Forex di oggi:\n"
+        for e in events:
+            msg += f"- {e['prefixedName']} ({e['timeLabel']})\n"
+            if e['forecast']:
+                msg += f"  📈 Previsione: {e['forecast']}\n"
+            if e['actual']:
+                msg += f"  📊 Attuale: {e['actual']}\n"
+            msg += f"  🔗 {e['url']}\n"
 
-# Configura webhook (su Render devi impostare URL tipo https://<tuo-servizio>.onrender.com)
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # es. https://mio-bot.onrender.com
-if not WEBHOOK_URL:
-    raise ValueError("Imposta la variabile WEBHOOK_URL su Render!")
+    update.message.reply_text(msg)
 
-async def main():
-    await app.bot.set_webhook(WEBHOOK_URL)
-    print(f"Webhook impostato su {WEBHOOK_URL}")
-    # Server aiohttp su Render
-    web_app = web.Application()
-    web_app.router.add_post("/", handle)
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    print(f"Bot pronto sulla porta {PORT}")
-    await site.start()
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("news", news))
 
-import asyncio
-asyncio.run(main())
+# --- Webhook endpoint per Render ---
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return "ok"
+
+# Endpoint per controlli
+@app.route("/")
+def index():
+    return "Bot attivo!"
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    print(f"Bot in ascolto su porta {port}")
+    app.run(host="0.0.0.0", port=port)
