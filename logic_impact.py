@@ -3,55 +3,53 @@ import re
 import json
 from datetime import datetime, timezone, timedelta
 
-FOREX_URL = "https://www.forexfactory.com/calendar.php"
+FOREX_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 
-def get_forex_news_today():
+def get_forex_news_today(for_week=False):
+    """
+    Recupera le news dal JS embedded di ForexFactory.
+    for_week=False -> news di oggi
+    for_week=True  -> news della settimana (usata per test settimana prossima)
+    """
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36"
         }
-        r = requests.get(FOREX_URL, headers=headers, timeout=10)
-        r.raise_for_status()
-        html = r.text
+        resp = requests.get(FOREX_CALENDAR_URL, headers=headers, timeout=10)
+        resp.raise_for_status()
+        html = resp.text
 
-        # Cerca window.calendarComponentStates
-        match = re.search(r"window\.calendarComponentStates\s*=\s*({.*?});", html, re.DOTALL)
+        # Cerca window.calendarComponentStates = {...};
+        pattern = r"window\.calendarComponentStates\s*=\s*(\{.*?\});"
+        match = re.search(pattern, html, re.DOTALL)
         if not match:
-            return ["❌ Variabile calendarComponentStates non trovata."]
+            return ["❌ Impossibile trovare calendarComponentStates nella pagina."]
 
         js_obj_str = match.group(1)
+        # Trasforma JS in JSON
         js_obj_str = js_obj_str.replace("'", '"')
-        js_obj_str = re.sub(r'(\w+):', r'"\1":', js_obj_str)
-
+        js_obj_str = re.sub(r'(\w+):', r'"\1":', js_obj_str)  # chiavi senza virgolette
         data = json.loads(js_obj_str)
 
-        # Giorno corrente Europe/Rome
-        tz = timezone(timedelta(hours=1))
-        today_str = datetime.now(tz).strftime("%Y-%m-%d")
+        tz = timezone(timedelta(hours=1))  # Europe/Rome
+        today_str = datetime.now(tz).strftime("%b %d")
 
-        # Cerca news del giorno
-        days = data.get("1", {}).get("days", [])
-        events_today = []
-        for day in days:
-            if today_str in day.get("date", ""):
-                events_today = day.get("events", [])
-                break
-
-        if not events_today:
-            return ["Nessun evento trovato oggi."]
-
-        messages = ["📊 News Forex di oggi:\n"]
-        for event in events_today:
-            line = f"- {event.get('prefixedName','N/A')} ({event.get('timeLabel','All Day')})"
-            if event.get("forecast"):
-                line += f" | Previsione: {event['forecast']}"
-            if event.get("actual"):
-                line += f" | Attuale: {event['actual']}"
-            if event.get("soloUrl"):
-                line += f" | 🔗 https://www.forexfactory.com{event['soloUrl']}"
-            messages.append(line)
-
-        return messages
-
+        news_list = []
+        for day in data.get("1", {}).get("days", []):
+            day_date = day.get("date", "")
+            if not for_week and today_str not in day_date:
+                continue
+            for event in day.get("events", []):
+                news_list.append({
+                    "prefixedName": event.get("prefixedName", "N/A"),
+                    "timeLabel": event.get("timeLabel", "All Day"),
+                    "forecast": event.get("forecast", ""),
+                    "actual": event.get("actual", ""),
+                    "url": f"https://www.forexfactory.com{event.get('soloUrl','')}"
+                })
+        if not news_list:
+            return ["Nessun evento trovato."]
+        return news_list
     except Exception as e:
-        return [f"Errore durante lo scraping: {e}"]
+        return [f"Errore nello scraping: {e}"]
