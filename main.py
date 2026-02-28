@@ -1,48 +1,53 @@
-import os
+# main.py
 import asyncio
+import os
+from datetime import datetime, timedelta
 from telegram import Bot
-from scraper import get_calendar_events
+from scraper import get_calendar_events  # ora corretto
 
-# --- Environment Variables ---
+# =========================
+# Configurazione
+# =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID = os.getenv("CHAT_ID")  # ID del canale o gruppo
+TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", 1))  # ore rispetto UTC
 
-MIN_IMPACT = "medium"
+# =========================
+# Funzioni
+# =========================
+async def send_message(bot: Bot, text: str):
+    """Invia un messaggio Telegram."""
+    await bot.send_message(chat_id=CHAT_ID, text=text)
 
 async def main():
-    if not BOT_TOKEN or not CHAT_ID:
-        print("Errore: BOT_TOKEN o CHAT_ID non impostati nelle environment variables.")
-        return
-
+    """Flusso principale: invio messaggio di avvio + eventi."""
+    now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+    start_msg = f"Menu\nData e ora attuale: {now.strftime('%Y-%m-%d %H:%M:%S')}"
+    
+    # Inizializza bot
     async with Bot(BOT_TOKEN) as bot:
-        try:
-            # Messaggio di avvio
-            await bot.send_message(
-                chat_id=CHAT_ID,
-                text="✅ Bot avviato correttamente!"
+        # Messaggio di avvio
+        await send_message(bot, start_msg)
+        
+        # Recupera eventi dal calendario
+        events = get_calendar_events()
+        if not events:
+            await send_message(bot, "[scraper] Nessun evento trovato oggi.")
+            return
+        
+        # Invia i primi eventi (limite a 10 per non spam)
+        for ev in events[:10]:
+            msg = (
+                f"{ev['date']} - {ev['time']}\n"
+                f"{ev['name']} ({ev['currency']})\n"
+                f"Impatto: {ev['impact']}\n"
+                f"Forecast: {ev['forecast']}, Previous: {ev['previous']}, Actual: {ev['actual']}\n"
+                f"Link: {ev['url']}"
             )
+            await send_message(bot, msg)
 
-            # Scraping eventi
-            events = get_calendar_events(min_impact=MIN_IMPACT)
-            print(f"[scraper] Trovati {len(events)} eventi")
-
-            if not events:
-                print("[scraper] Nessun evento trovato.")
-                return
-
-            # Invio eventi
-            for ev in events:
-                msg = (
-                    f"📅 {ev['date']} {ev['time']} | {ev['currency']} | Impatto: {ev['impact']}\n"
-                    f"📰 {ev['title']}\n"
-                    f"📊 Forecast: {ev['forecast']} | Previous: {ev['previous']} | Actual: {ev['actual']}\n"
-                    f"🔗 {ev['url']}"
-                )
-
-                await bot.send_message(chat_id=CHAT_ID, text=msg)
-
-        except Exception as e:
-            print("Errore nel bot:", e)
-
+# =========================
+# Esecuzione
+# =========================
 if __name__ == "__main__":
     asyncio.run(main())
