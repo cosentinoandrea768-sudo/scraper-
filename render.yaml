@@ -2,9 +2,10 @@ services:
   - type: web
     name: forex-bot
     env: python
+    pythonVersion: 3.11  # <- downgrade qui
     plan: free
     region: oregon
-    buildCommand: buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: python main.py
     envVars:
       - key: BOT_TOKEN
