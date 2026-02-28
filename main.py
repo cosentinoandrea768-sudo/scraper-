@@ -80,6 +80,16 @@ async def send_test_messages():
 # --- Avvio Flask + test asincrono ---
 if __name__ == "__main__":
     import threading
+
     port = int(os.environ.get("PORT", 10000))
+
+    # Flask in thread separato
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port)).start()
-    asyncio.run(send_test_messages())
+
+    # Avvio asincrono Telegram
+    async def main():
+        await application.initialize()   # inizializza il bot
+        await send_test_messages()      # messaggi test
+        await application.start()       # necessario per webhook
+
+    asyncio.run(main())
