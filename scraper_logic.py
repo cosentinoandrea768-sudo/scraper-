@@ -5,11 +5,14 @@ from datetime import datetime, timezone, timedelta
 
 FOREX_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 
-def get_forex_news(for_week=False):
+def get_forex_news(for_week=False, week_offset=0):
     """
     Recupera le news dal JS embedded di ForexFactory.
-    Se for_week=True, restituisce tutte le news della settimana.
-    Altrimenti solo le news di oggi.
+
+    Parametri:
+    - for_week: se True prende tutta la settimana, altrimenti solo oggi
+    - week_offset: 0=questa settimana, 1=settimana prossima
+
     Restituisce una lista di dizionari:
     [
         {
@@ -39,12 +42,11 @@ def get_forex_news(for_week=False):
 
         data_js = match.group(1)
         # Converte in JSON valido (rimuove trailing commas e singoli apici)
-        data_json = json.loads(
-            re.sub(r",\s*([\]}])", r"\1", data_js.replace("'", '"'))
-        )
+        data_json = json.loads(re.sub(r",\s*([\]}])", r"\1", data_js.replace("'", '"')))
 
         tz = timezone(timedelta(hours=1))  # Europe/Rome
-        today_str = datetime.now(tz).strftime("%b %d")  # es. "Feb 28"
+        today = datetime.now(tz) + timedelta(days=7*week_offset)
+        today_str = today.strftime("%b %d")  # es. "Feb 28"
 
         news_list = []
 
@@ -71,6 +73,12 @@ def get_forex_news(for_week=False):
 
 # Test rapido
 if __name__ == "__main__":
-    news = get_forex_news(for_week=True)
-    for n in news:
+    print("🔹 Test news oggi")
+    news_today = get_forex_news(for_week=False)
+    for n in news_today:
+        print(n)
+
+    print("\n🔹 Test news settimana prossima")
+    news_next_week = get_forex_news(for_week=True, week_offset=1)
+    for n in news_next_week:
         print(n)
