@@ -2,63 +2,46 @@ import csv
 import asyncio
 from datetime import datetime, timedelta
 from telegram import Bot
-from config import BOT_TOKEN, CHAT_ID, TIMEZONE_OFFSET, CSV_FILE
-from scraper import scrape_and_update_csv  # Assumendo che scraper.py abbia questa funzione
+import os
+from scraper import scrape_and_update_csv  # aggiorna il csv prima
 
-bot = Bot(token=BOT_TOKEN)
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
+CSV_FILE = "events.csv"
+TIMEZONE_OFFSET = 1
 
-async def send_upcoming_events():
+async def send_upcoming_events(bot: Bot):
     now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
-
-    # Calcola il lunedì della prossima settimana e il lunedì successivo
     start_next_week = now + timedelta(days=(7 - now.weekday()))
     end_next_week = start_next_week + timedelta(days=7)
 
     with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            # Salta righe vuote o senza DateTime
-            if not row["DateTime"].strip():
-                continue
-
-            currency = row["Currency"].strip()
-            impact = row["Impact"].strip().lower()
-
-            # Filtra solo HIGH Impact USD/EUR
-            if impact == "high" and currency in ["USD", "EUR"]:
-                try:
-                    event_time = datetime.strptime(row["DateTime"].strip(), "%Y-%m-%d %H:%M")
-                except ValueError:
-                    print(f"Formato DateTime non valido: {row['DateTime']}")
-                    continue
-
+            if row["Impact"].lower() == "high" and row["Currency"] in ["USD", "EUR"]:
+                event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
                 if start_next_week <= event_time < end_next_week:
-                    # Messaggio Telegram più leggibile e diviso per linee
                     message = (
-                        f"📅 DateTime: {row['DateTime'].strip()}\n"
-                        f"Event: {row['Event'].strip()}\n"
-                        f"Currency: {currency}\n"
-                        f"Impact: {row['Impact'].strip()}\n"
-                        f"Detail: {row['Detail'].strip()}\n"
-                        f"Actual: {row['Actual'].strip()}\n"
-                        f"Forecast: {row['Forecast'].strip()}\n"
-                        f"Previous: {row['Previous'].strip()}"
+                        f"📅 DateTime: {row['DateTime']}\n"
+                        f"Event: {row['Event']}\n"
+                        f"Currency: {row['Currency']}\n"
+                        f"Impact: {row['Impact']}\n"
+                        f"Detail: {row['Detail']}\n"
+                        f"Actual: {row['Actual']}\n"
+                        f"Forecast: {row['Forecast']}\n"
+                        f"Previous: {row['Previous']}"
                     )
                     await bot.send_message(chat_id=CHAT_ID, text=message)
-                    print(f"Messo in coda: {row['Event'].strip()}")
+                    print(f"Messo in coda: {row['Event']}")
 
 async def main():
-    # 1️⃣ Scraping e aggiornamento CSV
-    print("🔍 Avvio scraping e aggiornamento CSV...")
-    scrape_and_update_csv(CSV_FILE)
-    print("✅ CSV aggiornato!")
-
-    # 2️⃣ Messaggio di avvio Telegram
-    await bot.send_message(chat_id=CHAT_ID,
-                           text="🤖 Bot avviato e pronto a inviare eventi HIGH IMPACT USD/EUR della prossima settimana!")
-
-    # 3️⃣ Invio eventi filtrati
-    await send_upcoming_events()
+    scrape_and_update_csv()  # aggiorna CSV prima di leggere
+    async with Bot(BOT_TOKEN) as bot:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="🤖 Bot avviato e pronto a inviare eventi HIGH IMPACT USD/EUR della prossima settimana!"
+        )
+        await send_upcoming_events(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
