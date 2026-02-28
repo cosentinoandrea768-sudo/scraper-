@@ -3,7 +3,7 @@ services:
     name: forex-factory-bot
     env: python
     plan: free
-    runtime: python3.14
+    runtime: python3.11
     buildCommand: |
       pip install --upgrade pip setuptools wheel
       pip install --no-cache-dir -r requirements.txt
