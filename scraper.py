@@ -1,91 +1,109 @@
-# scraper.py
-import os
-import requests
-from bs4 import BeautifulSoup
-import json
-from datetime import datetime, timedelta
+import time
+import argparse
+from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from config import ALLOWED_ELEMENT_TYPES, ICON_COLOR_MAP
+from utilities import save_csv
+import config
 
-# =========================
-# Configurazione
-# =========================
-BASE_URL = "https://www.forexfactory.com/calendar"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-COOKIES = {
-    "ff": os.getenv("FF_COOKIE", "")  # Forex Factory cookie estratto dal browser
-}
-TIMEZONE_OFFSET = 1  # ore rispetto UTC
 
-# =========================
-# Funzioni
-# =========================
-def fetch_calendar_page():
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": BASE_URL,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Connection": "keep-alive",
-    }
-    resp = requests.get(BASE_URL, headers=headers, cookies=COOKIES, timeout=15)
-    resp.raise_for_status()
-    return resp.text
+def init_driver(headless=True):
+    options = webdriver.ChromeOptions()
+    if headless:
+        options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("window-size=1920x1080")
+    options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    )
+    service = Service(ChromeDriverManager().install())
+    return webdriver.Chrome(service=service, options=options)
 
-def parse_calendar_events(html):
-    soup = BeautifulSoup(html, "html.parser")
-    
-    # Trova lo script con calendarComponentStates
-    script_tag = None
-    for script in soup.find_all("script"):
-        if "calendarComponentStates" in script.text:
-            script_tag = script.text
+
+def scroll_to_end(driver):
+    previous_position = None
+    while True:
+        current_position = driver.execute_script("return window.pageYOffset;")
+        driver.execute_script("window.scrollTo(0, window.pageYOffset + 500);")
+        time.sleep(2)
+        if current_position == previous_position:
             break
-    if not script_tag:
-        raise RuntimeError("Impossibile trovare calendarComponentStates nella pagina")
-    
-    # Estrai la parte JSON
-    start = script_tag.find("window.calendarComponentStates[1] =") + len("window.calendarComponentStates[1] =")
-    end = script_tag.find("};", start) + 1
-    json_str = script_tag[start:end]
+        previous_position = current_position
 
-    # Converti in dict
-    try:
-        calendar_data = json.loads(json_str.replace("'", '"'))
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Errore parsing JSON: {e}")
 
-    # Estrai eventi giorno per giorno
-    all_events = []
-    for day in calendar_data.get("days", []):
-        day_date = day.get("date")
-        for ev in day.get("events", []):
-            event_info = {
-                "date": day_date,
-                "name": ev.get("name"),
-                "currency": ev.get("currency"),
-                "impact": ev.get("impactClass"),
-                "time": ev.get("timeLabel"),
-                "forecast": ev.get("forecast"),
-                "previous": ev.get("previous"),
-                "actual": ev.get("actual"),
-                "url": f"https://www.forexfactory.com{ev.get('url', '')}"
-            }
-            all_events.append(event_info)
-    return all_events
+def parse_table(driver, month, year):
+    data = []
+    table = driver.find_element(By.CLASS_NAME, "calendar__table")
 
-def get_calendar_events():
-    html = fetch_calendar_page()
-    return parse_calendar_events(html)
+    for row in table.find_elements(By.TAG_NAME, "tr"):
+        row_data = {}
+        event_id = row.get_attribute("data-event-id")
 
-# =========================
-# Test rapido
-# =========================
+        for element in row.find_elements(By.TAG_NAME, "td"):
+            class_name = element.get_attribute("class")
+
+            if class_name in ALLOWED_ELEMENT_TYPES:
+                key = ALLOWED_ELEMENT_TYPES[class_name]
+
+                if "calendar__impact" in class_name:
+                    color = None
+                    for impact in element.find_elements(By.TAG_NAME, "span"):
+                        color = ICON_COLOR_MAP.get(impact.get_attribute("class"))
+                    row_data[key] = color if color else "impact"
+
+                elif "calendar__detail" in class_name and event_id:
+                    row_data[key] = f"https://www.forexfactory.com/calendar?month={month}#detail={event_id}"
+                elif element.text:
+                    row_data[key] = element.text
+                else:
+                    row_data[key] = "empty"
+
+        if row_data:
+            data.append(row_data)
+
+    save_csv(data, month, year)
+    return data, month
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Scrape Forex Factory calendar.")
+    parser.add_argument("--months", nargs="+", help='Target months: e.g., this next')
+    args = parser.parse_args()
+    month_params = args.months if args.months else ["this"]
+
+    for param in month_params:
+        driver = init_driver()
+        url = f"https://www.forexfactory.com/calendar?month={param}"
+        print(f"[INFO] Navigating to {url}")
+        driver.get(url)
+        detected_tz = driver.execute_script("return Intl.DateTimeFormat().resolvedOptions().timeZone")
+        print(f"[INFO] Browser timezone: {detected_tz}")
+        config.SCRAPER_TIMEZONE = detected_tz
+        scroll_to_end(driver)
+
+        now = datetime.now()
+        if param.lower() == "this":
+            month, year = now.strftime("%B"), now.year
+        elif param.lower() == "next":
+            next_month = (now.month % 12) + 1
+            year = now.year if now.month < 12 else now.year + 1
+            month = datetime(year, next_month, 1).strftime("%B")
+        else:
+            month, year = param.capitalize(), now.year
+
+        print(f"[INFO] Scraping data for {month} {year}")
+        try:
+            parse_table(driver, month, str(year))
+        except Exception as e:
+            print(f"[ERROR] Failed to scrape {param} ({month} {year}): {e}")
+        driver.quit()
+        time.sleep(3)
+
+
 if __name__ == "__main__":
-    try:
-        events = get_calendar_events()
-        print(f"[scraper] Trovati {len(events)} eventi")
-        for ev in events[:10]:  # stampa solo i primi 10 per verifica
-            print(ev)
-    except requests.exceptions.HTTPError as e:
-        print(f"[scraper] HTTP error: {e}")
-    except Exception as e:
-        print(f"[scraper] Errore: {e}")
+    main()
