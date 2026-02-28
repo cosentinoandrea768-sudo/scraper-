@@ -1,76 +1,82 @@
-# main.py
 import os
-import csv
+import asyncio
 import pandas as pd
-from datetime import datetime
-from scraper import init_driver, scroll_to_end, parse_table, get_target_month
-from config import TARGET_TIMEZONE
-import pytz
+from scraper import parse_table, init_driver
+from utils import save_csv
+from datetime import datetime, timedelta
 import requests
+import config
 
 # =========================
-# Telegram settings
+# Telegram helper
 # =========================
-TELEGRAM_BOT_TOKEN = os.environ.get("BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("CHAT_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
-if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    raise RuntimeError("Devi impostare le variabili d'ambiente TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID")
-
-# =========================
-# Funzioni
-# =========================
 def send_telegram_message(message: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    if not BOT_TOKEN or not CHAT_ID:
+        print("[WARN] Telegram env vars non impostate.")
+        return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
     try:
         resp = requests.post(url, data=payload, timeout=10)
         if resp.status_code != 200:
             print(f"[WARN] Errore invio Telegram: {resp.text}")
     except Exception as e:
-        print(f"[WARN] Fallito invio Telegram: {e}")
+        print(f"[WARN] Impossibile inviare messaggio Telegram: {e}")
 
+# =========================
+# Funzioni principali
+# =========================
+async def main():
+    # 1️⃣ Messaggio di avvio
+    send_telegram_message("🚀 Bot avviato! Inizio scraping Forex Factory.")
 
-def read_events_from_csv(file_path: str) -> pd.DataFrame:
-    if not os.path.exists(file_path):
-        print(f"[WARN] File {file_path} non trovato")
-        return pd.DataFrame()
-    df = pd.read_csv(file_path)
-    return df
-
-
-def main():
-    # Determina mese e anno correnti
+    # 2️⃣ Calcola mese della prossima settimana
     now = datetime.now()
-    month = now.strftime("%B")
-    year = now.year
-    csv_file = f"news/{month}_{year}_news.csv"
+    next_week = now + timedelta(days=7)
+    month = next_week.strftime("%B")
+    year = str(next_week.year)
 
-    # Inizia lo scraping (opzionale, se vuoi aggiornare il CSV ogni volta)
+    # 3️⃣ Inizializza driver
     driver = init_driver(headless=True)
-    url = f"https://www.forexfactory.com/calendar?month=this"
-    print(f"[INFO] Navigando a {url}")
+    url = f"https://www.forexfactory.com/calendar?month={month.lower()}"
     driver.get(url)
-    scroll_to_end(driver)
 
-    # Scraping e salvataggio CSV
-    print(f"[INFO] Parsing tabella per {month} {year}")
-    try:
-        parse_table(driver, month, str(year))
-    except Exception as e:
-        print(f"[ERROR] Fallito scraping: {e}")
-    finally:
-        driver.quit()
+    # Salva timezone rilevata
+    detected_tz = driver.execute_script("return Intl.DateTimeFormat().resolvedOptions().timeZone")
+    config.SCRAPER_TIMEZONE = detected_tz
 
-    # Leggi eventi dal CSV generato
-    df = read_events_from_csv(csv_file)
-    num_events = len(df)
-    message = f"📊 Forex Factory: {num_events} eventi rilevanti trovati per {month} {year}."
-    print(message)
+    # Scroll per caricare tutto
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    await asyncio.sleep(2)
 
-    # Invia notifica su Telegram
-    send_telegram_message(message)
+    # 4️⃣ Scarica e salva dati
+    data, _ = parse_table(driver, month, year)
+    driver.quit()
 
+    if not data:
+        send_telegram_message(f"⚠️ Nessun dato trovato per {month} {year}")
+        return
 
+    # 5️⃣ Leggi CSV generato e manda messaggi Telegram
+    csv_file = f"news/{month}_{year}_news.csv"
+    df = pd.read_csv(csv_file)
+
+    message = f"<b>🗓 News Forex Factory - Settimana prossima ({month} {year})</b>\n\n"
+    for _, row in df.iterrows():
+        message += f"{row['date']} {row['time']} | {row['currency']} | {row['impact']} | {row['event']}\n"
+        if row['detail']:
+            message += f"🔗 {row['detail']}\n"
+    send_telegram_message(message[:4000])  # Telegram limita a ~4096 caratteri
+
+# =========================
+# Avvio
+# =========================
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
