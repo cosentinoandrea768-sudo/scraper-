@@ -1,56 +1,45 @@
-import requests
-import re
-import json
-from datetime import datetime, timezone, timedelta
-
-FOREX_CALENDAR_URL = "https://www.forexfactory.com/calendar"
+from datetime import datetime, timedelta
+from market_calendar_tool import scrape_calendar, Site
+import pandas as pd
 
 def get_forex_news_today(for_week=False):
     """
-    Recupera le news dal JS embedded di ForexFactory.
+    Recupera le news da ForexFactory tramite market-calendar-tool.
     for_week=False -> news di oggi
-    for_week=True  -> news della settimana (usata per test settimana prossima)
+    for_week=True  -> news della settimana corrente
     Restituisce lista di dict pronti per Telegram.
     """
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36"
-        }
-        resp = requests.get(FOREX_CALENDAR_URL, headers=headers, timeout=10)
-        resp.raise_for_status()
-        html = resp.text
+        df = scrape_calendar(site=Site.FOREXFACTORY)
 
-        # Cerca JS embedded: window.calendarComponentStates = {...};
-        pattern = r"window\.calendarComponentStates\s*=\s*(\{.*?\});"
-        match = re.search(pattern, html, re.DOTALL)
-        if not match:
-            return ["❌ Impossibile trovare calendarComponentStates nella pagina."]
+        if df is None or df.empty:
+            return ["Nessun evento trovato."]
 
-        js_obj_str = match.group(1)
-        js_obj_str = js_obj_str.replace("'", '"')               # apostrofi → virgolette
-        js_obj_str = re.sub(r'(\w+):', r'"\1":', js_obj_str)   # chiavi senza virgolette
-        data = json.loads(js_obj_str)
+        # Assicuriamoci che la colonna date sia datetime
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-        tz = timezone(timedelta(hours=1))  # Europe/Rome
-        today_str = datetime.now(tz).strftime("%b %d")        # es. "Feb 28"
+        today = datetime.utcnow().date()
+
+        if for_week:
+            end_week = today + timedelta(days=7)
+            df_filtered = df[(df["date"].dt.date >= today) &
+                             (df["date"].dt.date <= end_week)]
+        else:
+            df_filtered = df[df["date"].dt.date == today]
+
+        if df_filtered.empty:
+            return ["Nessun evento trovato."]
 
         news_list = []
-        for day in data.get("1", {}).get("days", []):
-            day_date = day.get("date", "")
-            if not for_week and today_str not in day_date:
-                continue
-            for event in day.get("events", []):
-                news_list.append({
-                    "prefixedName": event.get("prefixedName", "N/A"),
-                    "timeLabel": event.get("timeLabel", "All Day"),
-                    "forecast": event.get("forecast", ""),
-                    "actual": event.get("actual", ""),
-                    "url": f"https://www.forexfactory.com{event.get('soloUrl','')}"
-                })
 
-        if not news_list:
-            return ["Nessun evento trovato."]
+        for _, row in df_filtered.iterrows():
+            news_list.append({
+                "prefixedName": row.get("event", "N/A"),
+                "timeLabel": str(row.get("time", "All Day")),
+                "forecast": row.get("forecast", ""),
+                "actual": row.get("actual", ""),
+                "url": "https://www.forexfactory.com/calendar"
+            })
 
         return news_list
 
