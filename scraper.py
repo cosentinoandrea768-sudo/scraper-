@@ -1,44 +1,39 @@
-import time
-import pandas as pd
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from config import FOREX_FACTORY_URL
+import requests
+import csv
+from bs4 import BeautifulSoup
+from datetime import datetime
 
-def init_driver():
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    return driver
-
+CSV_FILE = "events.csv"
 
 def scrape_forex_factory():
-    driver = init_driver()
-    driver.get(FOREX_FACTORY_URL)
-    time.sleep(5)
+    url = "https://www.forexfactory.com/calendar?week=this"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(url, headers=headers)
+    soup = BeautifulSoup(r.text, "html.parser")
 
     events = []
 
-    rows = driver.find_elements(By.CSS_SELECTOR, "tr.calendar__row")
-
+    rows = soup.select("tr.calendar__row")
     for row in rows:
         try:
-            time_el = row.find_element(By.CLASS_NAME, "calendar__time").text
-            currency = row.find_element(By.CLASS_NAME, "calendar__currency").text
-            impact = row.find_element(By.CLASS_NAME, "calendar__impact").get_attribute("title")
-            event = row.find_element(By.CLASS_NAME, "calendar__event").text
+            date = row.select_one(".calendar__date").get_text(strip=True)
+            time = row.select_one(".calendar__time").get_text(strip=True)
+            currency = row.select_one(".calendar__currency").get_text(strip=True)
+            impact = row.select_one(".impact").get_text(strip=True)
+            event_name = row.select_one(".calendar__event").get_text(strip=True)
+            forecast = row.select_one(".forecast").get_text(strip=True)
+            previous = row.select_one(".previous").get_text(strip=True)
 
-            events.append({
-                "time": time_el,
-                "currency": currency,
-                "impact": impact,
-                "event": event
-            })
+            # Unisci date e time in ISO
+            dt = datetime.strptime(f"{date} {time}", "%b %d %Y %H:%M")
+            iso_date = dt.isoformat()
+
+            events.append([iso_date, currency, impact, event_name, "", forecast, previous])
         except:
             continue
 
-    driver.quit()
-    return pd.DataFrame(events)
+    # Scrivi CSV
+    with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["date","currency","impact","event","actual","forecast","previous"])
+        writer.writerows(events)
