@@ -1,61 +1,47 @@
 import csv
 from datetime import datetime, timedelta
 from telegram import Bot
-from apscheduler.schedulers.background import BackgroundScheduler
+from config import BOT_TOKEN, CHAT_ID, TIMEZONE_OFFSET, CSV_FILE
 
-CSV_FILE = "events.csv"
-CHAT_ID = "IL_TUO_CHAT_ID"
-TOKEN = "IL_TUO_BOT_TOKEN"
-TIMEZONE_OFFSET = 1  # adatta se vuoi UTC+1
-
-bot = Bot(token=TOKEN)
-
-def send_all_events():
-    """Invia tutte le righe del CSV su Telegram."""
-    with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            message = (
-                f"📅 {row['DateTime']}\n"
-                f"💱 {row['Currency']}\n"
-                f"⚡ Impact: {row['Impact']}\n"
-                f"📰 Event: {row['Event']}\n"
-                f"🔹 Actual: {row['Actual']}\n"
-                f"🔹 Forecast: {row['Forecast']}\n"
-                f"🔹 Previous: {row['Previous']}\n"
-                f"🔗 Details: {row['Detail']}"
-            )
-            bot.send_message(chat_id=CHAT_ID, text=message)
+# Inizializza il bot Telegram
+bot = Bot(token=BOT_TOKEN)
+print("Bot avviato...")
 
 def send_upcoming_events():
-    """Invia solo eventi imminenti (schedulazione normale)."""
     now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
-    with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M:%S")
-            if 0 <= (event_time - now).total_seconds() <= 3600:  # prossima ora
-                message = (
-                    f"📅 {row['DateTime']}\n"
-                    f"💱 {row['Currency']}\n"
-                    f"⚡ Impact: {row['Impact']}\n"
-                    f"📰 Event: {row['Event']}\n"
-                    f"🔹 Actual: {row['Actual']}\n"
-                    f"🔹 Forecast: {row['Forecast']}\n"
-                    f"🔹 Previous: {row['Previous']}\n"
-                    f"🔗 Details: {row['Detail']}"
-                )
-                bot.send_message(chat_id=CHAT_ID, text=message)
+    upcoming_events = []
 
-# Messaggio di avvio
-bot.send_message(chat_id=CHAT_ID, text="🤖 Bot avviato! Inizio test invio eventi...")
+    # Legge il CSV
+    try:
+        with open(CSV_FILE, newline="", encoding="utf-8") as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                try:
+                    event_time = datetime.strptime(row["DateTime"], "%Y-%m-%d %H:%M")
+                except ValueError:
+                    print(f"Formato data non valido: {row['DateTime']}")
+                    continue
 
-# Invia tutte le news subito
-send_all_events()
+                if event_time >= now:
+                    upcoming_events.append(row)
 
-# Scheduler per eventi futuri
-scheduler = BackgroundScheduler()
-scheduler.add_job(send_upcoming_events, "interval", minutes=10)
-scheduler.start()
+    except FileNotFoundError:
+        print(f"File CSV non trovato: {CSV_FILE}")
+        return
 
-print("Bot avviato e scheduler attivo!")
+    # Invia i messaggi per ogni evento futuro
+    for event in upcoming_events:
+        message = (
+            f"📌 Evento: {event['Event']}\n"
+            f"🕒 Data/Ora: {event['DateTime']}\n"
+            f"💰 Valuta: {event['Currency']}\n"
+            f"⚡ Impatto: {event['Impact']}\n"
+            f"📊 Forecast: {event['Forecast']}\n"
+            f"🔙 Previous: {event['Previous']}\n"
+            f"📝 Dettagli: {event['Detail']}"
+        )
+        bot.send_message(chat_id=CHAT_ID, text=message)
+        print(f"Inviato evento: {event['Event']}")
+
+# Avvio invio eventi
+send_upcoming_events()
