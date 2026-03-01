@@ -4,7 +4,7 @@ import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Bot
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pytz
 
 # ==============================
@@ -63,18 +63,22 @@ def fetch_news():
 def process_news(initial=False):
     news = fetch_news()
 
-    # Filtra solo High Impact USD/EUR
+    # Calcolo inizio settimana (lunedì) in UTC
+    now = datetime.now(timezone.utc)
+    start_of_week = now - timedelta(days=now.weekday())  # lunedì 00:00 UTC
+
     high_impact = [
         event for event in news
         if event.get("impact") == "High"
         and event.get("country") in ("USD", "EUR")
         and event.get("date") is not None
+        and start_of_week <= datetime.fromisoformat(event.get("date")).astimezone(timezone.utc) <= now + timedelta(days=7)
     ]
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
         if high_impact:
-            send_message("📌 Eventi High Impact USD/EUR:")
+            send_message("📌 Eventi High Impact USD/EUR della settimana:")
 
     for event in high_impact:
         event_id = event.get("id")
@@ -84,7 +88,7 @@ def process_news(initial=False):
         try:
             event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
         except Exception:
-            event_date = event.get("date")  # fallback in caso di formato strano
+            event_date = event.get("date")  # fallback
 
         message = (
             f"📊 HIGH IMPACT NEWS\n"
