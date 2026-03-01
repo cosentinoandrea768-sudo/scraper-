@@ -1,10 +1,10 @@
 import os
 import logging
 import requests
-from datetime import datetime, timedelta
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Bot
+from datetime import datetime, timedelta, timezone
 import pytz
 
 # ==============================
@@ -27,18 +27,6 @@ logging.basicConfig(
 )
 
 sent_events = set()
-
-# Mappa country -> currency
-COUNTRY_TO_CURRENCY = {
-    "United States": "USD",
-    "Eurozone": "EUR",
-    "United Kingdom": "GBP",
-    "Japan": "JPY",
-    "Canada": "CAD",
-    "Switzerland": "CHF",
-    "Australia": "AUD",
-    "New Zealand": "NZD",
-}
 
 # ==============================
 # TELEGRAM
@@ -74,48 +62,38 @@ def fetch_news():
 
 def process_news(initial=False):
     news = fetch_news()
-    now = datetime.utcnow().replace(tzinfo=pytz.utc)
+
+    # Calcolo settimana passata in UTC
+    now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
 
-    high_impact = []
-    for event in news:
-        if event.get("impact") != "High":
-            continue
-        try:
-            event_dt = datetime.fromisoformat(event.get("date")).astimezone(pytz.utc)
-        except Exception:
-            continue
-        if week_ago <= event_dt <= now:
-            high_impact.append(event)
+    high_impact = [
+        event for event in news
+        if event.get("impact") == "High"
+        and event.get("country") is not None
+        and week_ago <= datetime.fromisoformat(event.get("date")) <= now
+    ]
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
         if high_impact:
-            send_message("📌 Eventi High Impact della settimana passata:")
+            send_message("📌 Eventi High Impact della settimana:")
 
     for event in high_impact:
         event_id = event.get("id")
         if event_id in sent_events:
             continue
 
-        country = event.get("country", "")
-        currency = COUNTRY_TO_CURRENCY.get(country, "N/A")
-
-        try:
-            dt = datetime.fromisoformat(event.get("date")).astimezone(pytz.utc)
-            date_str = dt.strftime("%Y-%m-%d %H:%M UTC")
-        except Exception:
-            date_str = event.get("date", "N/A")
-
+        event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
         message = (
             f"📊 HIGH IMPACT NEWS\n"
-            f"💱 Currency: {currency}\n"
+            f"💱 Currency: {event.get('country')}\n"
             f"📰 Event: {event.get('title')}\n"
             f"⚡ Impact: {event.get('impact')}\n"
-            f"⏰ Date/Time: {date_str}\n"
-            f"📈 Previous: {event.get('previous', 'N/A')}\n"
-            f"📊 Actual: {event.get('actual', 'N/A')}\n"
-            f"🔮 Forecast: {event.get('forecast', 'N/A')}"
+            f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M %Z')}\n"
+            f"📈 Previous: {event.get('previous')}\n"
+            f"📊 Actual: {event.get('actual')}\n"
+            f"🔮 Forecast: {event.get('forecast')}"
         )
 
         send_message(message)
@@ -140,4 +118,4 @@ scheduler.add_job(process_news, "interval", minutes=5)
 scheduler.start()
 
 logging.info("Scheduler avviato")
-process_news(initial=True)
+process_news(initial=True
