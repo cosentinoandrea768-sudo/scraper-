@@ -4,13 +4,12 @@ import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Bot
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 # ==============================
 # CONFIG
 # ==============================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
@@ -28,10 +27,21 @@ logging.basicConfig(
 
 sent_events = set()
 
+# Mapping country -> currency
+COUNTRY_TO_CURRENCY = {
+    "United States": "USD",
+    "Eurozone": "EUR",
+    "United Kingdom": "GBP",
+    "Japan": "JPY",
+    "Canada": "CAD",
+    "Switzerland": "CHF",
+    "Australia": "AUD",
+    "New Zealand": "NZD",
+}
+
 # ==============================
 # TELEGRAM
 # ==============================
-
 def send_message(text):
     try:
         bot.send_message(
@@ -46,7 +56,6 @@ def send_message(text):
 # ==============================
 # FOREX
 # ==============================
-
 def fetch_news():
     try:
         response = requests.get(
@@ -62,51 +71,45 @@ def fetch_news():
 
 def process_news(initial=False):
     news = fetch_news()
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
 
-    high_impact = [event for event in news if event.get("impact") == "High"]
+    # Filtra eventi high impact della settimana passata
+    high_impact = [
+        event for event in news
+        if event.get("impact") == "High"
+        and week_ago <= datetime.fromisoformat(event.get("date")) <= now
+    ]
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
         if high_impact:
-            send_message("📌 Eventi High Impact di questa settimana:")
+            send_message("📌 Eventi High Impact della settimana passata:")
 
     for event in high_impact:
         event_id = event.get("id")
         if event_id in sent_events:
             continue
 
-        # Pulizia dei dati
-        currency = event.get("currency") or "N/A"
-        title = event.get("title") or "N/A"
-        impact = event.get("impact") or "N/A"
-        date_str = event.get("date") or ""
-        time_str = event.get("time") or ""
+        country = event.get("country", "")
+        currency = COUNTRY_TO_CURRENCY.get(country, "N/A")
 
-        # Formattazione data/ora
-        dt_str = f"{date_str} {time_str}".strip()
-        if dt_str:
-            try:
-                dt = datetime.fromisoformat(dt_str)
-                dt = dt.astimezone(pytz.utc)
-                dt_formatted = dt.strftime("%Y-%m-%d %H:%M UTC")
-            except Exception:
-                dt_formatted = dt_str
-        else:
-            dt_formatted = "N/A"
-
-        previous = event.get("previous") or "N/A"
-        actual = event.get("actual") or "N/A"
-        forecast = event.get("forecast") or "N/A"
+        # Parsing data e ora
+        try:
+            dt = datetime.fromisoformat(event.get("date")).astimezone(pytz.utc)
+            date_str = dt.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            date_str = event.get("date", "N/A")
 
         message = (
             f"📊 HIGH IMPACT NEWS\n"
             f"💱 Currency: {currency}\n"
-            f"📰 Event: {title}\n"
-            f"⚡ Impact: {impact}\n"
-            f"⏰ Date/Time: {dt_formatted}\n"
-            f"📈 Previous: {previous}\n"
-            f"🔮 Forecast: {forecast}\n"
-            f"📊 Actual: {actual}"
+            f"📰 Event: {event.get('title')}\n"
+            f"⚡ Impact: {event.get('impact')}\n"
+            f"⏰ Date/Time: {date_str}\n"
+            f"📈 Previous: {event.get('previous', 'N/A')}\n"
+            f"📊 Actual: {event.get('actual', 'N/A')}\n"
+            f"🔮 Forecast: {event.get('forecast', 'N/A')}"
         )
 
         send_message(message)
@@ -115,7 +118,6 @@ def process_news(initial=False):
 # ==============================
 # FLASK APP
 # ==============================
-
 app = Flask(__name__)
 
 @app.route("/")
@@ -125,7 +127,6 @@ def health():
 # ==============================
 # SCHEDULER START
 # ==============================
-
 scheduler = BackgroundScheduler(timezone=pytz.utc)
 scheduler.add_job(process_news, "interval", minutes=5)
 scheduler.start()
