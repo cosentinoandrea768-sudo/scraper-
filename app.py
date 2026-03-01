@@ -4,7 +4,7 @@ import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Bot
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import pytz
 
 # ==============================
@@ -63,36 +63,35 @@ def fetch_news():
 def process_news(initial=False):
     news = fetch_news()
 
-    # Calcolo settimana passata in UTC
-    now = datetime.now(timezone.utc)
-    week_ago = now - timedelta(days=7)
-
-    # Filtra solo High Impact e currency USD/EUR
+    # Filtra solo High Impact USD/EUR
     high_impact = [
         event for event in news
         if event.get("impact") == "High"
         and event.get("country") in ("USD", "EUR")
         and event.get("date") is not None
-        and week_ago <= datetime.fromisoformat(event.get("date")).astimezone(timezone.utc) <= now
     ]
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
         if high_impact:
-            send_message("📌 Eventi High Impact di USD/EUR della settimana:")
+            send_message("📌 Eventi High Impact USD/EUR:")
 
     for event in high_impact:
         event_id = event.get("id")
         if event_id in sent_events:
             continue
 
-        event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
+        try:
+            event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
+        except Exception:
+            event_date = event.get("date")  # fallback in caso di formato strano
+
         message = (
             f"📊 HIGH IMPACT NEWS\n"
             f"💱 Currency: {event.get('country')}\n"
             f"📰 Event: {event.get('title')}\n"
             f"⚡ Impact: {event.get('impact')}\n"
-            f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M %Z')}\n"
+            f"⏰ Date/Time: {event_date if isinstance(event_date,str) else event_date.strftime('%Y-%m-%d %H:%M %Z')}\n"
             f"📈 Previous: {event.get('previous')}\n"
             f"📊 Actual: {event.get('actual')}\n"
             f"🔮 Forecast: {event.get('forecast')}"
