@@ -63,16 +63,39 @@ def fetch_news():
 def process_news(initial=False):
     news = fetch_news()
 
-    # Calcolo settimana passata in UTC
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
 
-    high_impact = [
-        event for event in news
-        if event.get("impact") == "High"
-        and event.get("country") is not None
-        and week_ago <= datetime.fromisoformat(event.get("date")) <= now
-    ]
+    # Country -> Currency professionale
+    COUNTRY_TO_CURRENCY = {
+        "United States": "USD",
+        "Eurozone": "EUR",
+        "Japan": "JPY",
+        "United Kingdom": "GBP",
+        "Canada": "CAD",
+        "Australia": "AUD",
+        "Switzerland": "CHF",
+        "China": "CNY",
+    }
+
+    high_impact = []
+    for event in news:
+        if event.get("impact") != "High":
+            continue
+        if not event.get("country"):
+            continue
+
+        try:
+            event_date = datetime.fromisoformat(event.get("date"))
+            if event_date.tzinfo is None:
+                event_date = event_date.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+
+        if not (week_ago <= event_date <= now):
+            continue
+
+        high_impact.append(event)
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
@@ -84,10 +107,16 @@ def process_news(initial=False):
         if event_id in sent_events:
             continue
 
-        event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
+        event_date = datetime.fromisoformat(event.get("date"))
+        if event_date.tzinfo is None:
+            event_date = event_date.replace(tzinfo=timezone.utc)
+        event_date = event_date.astimezone(timezone.utc)
+
+        currency = COUNTRY_TO_CURRENCY.get(event.get("country"), event.get("country"))
+
         message = (
             f"📊 HIGH IMPACT NEWS\n"
-            f"💱 Currency: {event.get('country')}\n"
+            f"💱 Currency: {currency}\n"
             f"📰 Event: {event.get('title')}\n"
             f"⚡ Impact: {event.get('impact')}\n"
             f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M %Z')}\n"
