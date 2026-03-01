@@ -4,7 +4,6 @@ import logging
 from datetime import datetime, timedelta
 from flask import Flask
 from telegram import Bot
-import pytz
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
