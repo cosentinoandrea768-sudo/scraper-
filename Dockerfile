@@ -1,23 +1,25 @@
-# Usa immagine Python leggera
+# ==============================
+# Dockerfile per Bot Forex Telegram
+# ==============================
+
+# Base image Python slim
 FROM python:3.11-slim
 
-# Evita bytecode e buffering
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Cartella di lavoro
+# Imposta la working directory
 WORKDIR /app
 
-# Copia requirements
+# Copia requirements e installa le dipendenze
 COPY requirements.txt .
+
+# Aggiorna pip e installa le dipendenze
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# Copia il codice
+# Copia tutto il progetto nel container
 COPY . .
 
-# Espone la porta (Render la assegna via $PORT, ma dichiariamo lo stesso)
+# Esponi la porta (Render passerà $PORT)
 EXPOSE 10000
 
-# Avvia con Gunicorn (usa --preload se hai problemi con APScheduler multi-worker)
-CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "--timeout", "120", "app:app"]
+# Avvio del bot con Gunicorn, legge $PORT da Render
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-10000} --workers 1"]
