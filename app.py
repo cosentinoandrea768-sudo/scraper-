@@ -118,4 +118,4 @@ scheduler.add_job(process_news, "interval", minutes=5)
 scheduler.start()
 
 logging.info("Scheduler avviato")
-process_news(initial=True
+process_news(initial=True)
