@@ -10,16 +10,14 @@ WORKDIR /app
 
 # Copia requirements
 COPY requirements.txt .
-
-# Installa dipendenze
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# Copia tutto il progetto
+# Copia il codice
 COPY . .
 
-# Espone la porta (Render la assegna dinamicamente)
+# Espone la porta (Render la assegna via $PORT, ma dichiariamo lo stesso)
 EXPOSE 10000
 
-# Avvia con Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "app:app"]
+# Avvia con Gunicorn (usa --preload se hai problemi con APScheduler multi-worker)
+CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "--timeout", "120", "app:app"]
