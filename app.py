@@ -1,6 +1,7 @@
 import os
 import logging
 import requests
+from datetime import datetime
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Bot
@@ -43,7 +44,7 @@ def send_message(text):
         logging.error(f"Errore invio Telegram: {e}")
 
 # ==============================
-# FOREX
+# FETCH NEWS
 # ==============================
 
 def fetch_news():
@@ -51,7 +52,7 @@ def fetch_news():
         response = requests.get(
             FOREX_URL,
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=15
+            timeout=20
         )
         response.raise_for_status()
         return response.json()
@@ -59,34 +60,68 @@ def fetch_news():
         logging.error(f"Errore fetch news: {e}")
         return []
 
+# ==============================
+# PROCESS NEWS
+# ==============================
+
 def process_news(initial=False):
     news = fetch_news()
 
-    high_impact = [
+    if not news:
+        logging.info("Nessuna news trovata")
+        return
+
+    # Filtro: High Impact + USD/EUR
+    filtered_news = [
         event for event in news
         if event.get("impact") == "High"
+        and event.get("currency") in ["USD", "EUR"]
     ]
 
-    if initial:
-        send_message("🚀 Bot avviato correttamente!")
-        if high_impact:
-            send_message("📌 Eventi High Impact di questa settimana:")
+    if not filtered_news:
+        logging.info("Nessun evento USD/EUR High Impact trovato")
+        return
 
-    for event in high_impact:
+    # Ordina per data se possibile
+    def parse_date(event):
+        try:
+            return datetime.strptime(event.get("date"), "%Y-%m-%d %H:%M:%S")
+        except:
+            return datetime.max
+
+    filtered_news.sort(key=parse_date)
+
+    if initial:
+        header = "🚀 *Bot avviato correttamente!*\n\n"
+        header += "📅 *Eventi HIGH IMPACT della settimana*\n"
+        header += "💱 Valute filtrate: USD & EUR\n\n"
+    else:
+        header = "📅 *Aggiornamento Eventi HIGH IMPACT*\n\n"
+
+    message_body = ""
+
+    for event in filtered_news:
         event_id = event.get("id")
 
         if event_id in sent_events:
             continue
 
-        message = (
-            f"📊 HIGH IMPACT NEWS\n"
-            f"💱 {event.get('currency')}\n"
-            f"📰 {event.get('title')}\n"
-            f"⏰ {event.get('date')}"
+        currency = event.get("currency")
+        title = event.get("title")
+        date_str = event.get("date")
+
+        message_body += (
+            f"📊 *{currency}*\n"
+            f"📰 {title}\n"
+            f"⏰ {date_str}\n\n"
         )
 
-        send_message(message)
         sent_events.add(event_id)
+
+    if message_body:
+        full_message = header + message_body
+        send_message(full_message)
+        logging.info(f"Inviati {len(filtered_news)} eventi filtrati")
 
 # ==============================
 # FLASK APP
@@ -99,7 +134,7 @@ def health():
     return "Bot attivo", 200
 
 # ==============================
-# SCHEDULER START (IMPORTANTE)
+# SCHEDULER START
 # ==============================
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
