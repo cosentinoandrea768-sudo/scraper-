@@ -4,6 +4,7 @@ import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Bot
+from datetime import datetime
 import pytz
 
 # ==============================
@@ -62,10 +63,7 @@ def fetch_news():
 def process_news(initial=False):
     news = fetch_news()
 
-    high_impact = [
-        event for event in news
-        if event.get("impact") == "High"
-    ]
+    high_impact = [event for event in news if event.get("impact") == "High"]
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
@@ -74,24 +72,41 @@ def process_news(initial=False):
 
     for event in high_impact:
         event_id = event.get("id")
-
         if event_id in sent_events:
             continue
 
-        # Estraggo valori previous, actual e forecast
-        previous = event.get("previous", "N/A")
-        actual = event.get("actual", "N/A")
-        forecast = event.get("forecast", "N/A")
+        # Pulizia dei dati
+        currency = event.get("currency") or "N/A"
+        title = event.get("title") or "N/A"
+        impact = event.get("impact") or "N/A"
+        date_str = event.get("date") or ""
+        time_str = event.get("time") or ""
+
+        # Formattazione data/ora
+        dt_str = f"{date_str} {time_str}".strip()
+        if dt_str:
+            try:
+                dt = datetime.fromisoformat(dt_str)
+                dt = dt.astimezone(pytz.utc)
+                dt_formatted = dt.strftime("%Y-%m-%d %H:%M UTC")
+            except Exception:
+                dt_formatted = dt_str
+        else:
+            dt_formatted = "N/A"
+
+        previous = event.get("previous") or "N/A"
+        actual = event.get("actual") or "N/A"
+        forecast = event.get("forecast") or "N/A"
 
         message = (
-            f"📊 *HIGH IMPACT NEWS*\n"
-            f"💱 *Currency:* {event.get('currency', 'N/A')}\n"
-            f"📰 *Event:* {event.get('title', 'N/A')}\n"
-            f"⚡ *Impact:* {event.get('impact', 'N/A')}\n"
-            f"⏰ *Date/Time:* {event.get('date', 'N/A')} {event.get('time', '')}\n"
-            f"📈 *Previous:* {previous}\n"
-            f"📊 *Actual:* {actual}\n"
-            f"🔮 *Forecast:* {forecast}"
+            f"📊 HIGH IMPACT NEWS\n"
+            f"💱 Currency: {currency}\n"
+            f"📰 Event: {title}\n"
+            f"⚡ Impact: {impact}\n"
+            f"⏰ Date/Time: {dt_formatted}\n"
+            f"📈 Previous: {previous}\n"
+            f"🔮 Forecast: {forecast}\n"
+            f"📊 Actual: {actual}"
         )
 
         send_message(message)
@@ -108,7 +123,7 @@ def health():
     return "Bot attivo", 200
 
 # ==============================
-# SCHEDULER START (IMPORTANTE)
+# SCHEDULER START
 # ==============================
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
