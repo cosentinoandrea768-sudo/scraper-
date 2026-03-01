@@ -61,57 +61,57 @@ def fetch_news():
         logging.error(f"Errore fetch news: {e}")
         return []
 
-def process_news(initial=False, daily=False):
+def process_news(initial=False):
     news = fetch_news()
-    if not news:
-        return
-
     now = datetime.now(timezone.utc)
-    # In daily mode, consider only today's news UTC
-    if daily:
-        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=999999)
-    else:
-        # Default: last 7 days
-        start_of_day = now - timedelta(days=7)
-        end_of_day = now
 
-    # Filtra high impact + currency USD/EUR + periodo
+    # Se initial=True, manda messaggio di avvio
+    if initial:
+        send_message("🚀 Bot avviato correttamente!")
+    
+    # Filtra solo USD e EUR e High Impact
     high_impact = [
         event for event in news
         if event.get("impact") == "High"
         and event.get("country") in ("USD", "EUR")
-        and start_of_day <= datetime.fromisoformat(event.get("date")) <= end_of_day
     ]
 
-    if initial:
-        send_message("🚀 Bot avviato correttamente!")
-        if high_impact:
-            send_message("📌 Eventi High Impact della settimana:")
+    # Filtra le news del giorno corrente UTC+1
+    utc1 = pytz.timezone("Etc/GMT-1")
+    today = now.astimezone(utc1).date()
 
+    todays_news = []
     for event in high_impact:
+        event_date = datetime.fromisoformat(event.get("date")).astimezone(utc1)
+        if event_date.date() == today:
+            todays_news.append((event, event_date))
+
+    if not todays_news and initial:
+        send_message("📌 Nessuna news High Impact USD/EUR oggi")
+        return
+
+    if initial and todays_news:
+        send_message("📌 Eventi High Impact USD/EUR di oggi:")
+
+    for event, event_date in todays_news:
         event_id = event.get("id")
         if event_id in sent_events:
             continue
 
-        event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
-
-        # Logic Impact se actual e forecast presenti
-        logic_impact = ""
+        # Calcolo positivo/negativo se actual disponibile
         actual = event.get("actual")
         forecast = event.get("forecast")
+        impact_logic = ""
         if actual is not None and forecast is not None:
             try:
-                actual_val = float(actual)
-                forecast_val = float(forecast)
-                if actual_val > forecast_val:
-                    logic_impact = "📈 Positiva"
-                elif actual_val < forecast_val:
-                    logic_impact = "📉 Negativa"
-                else:
-                    logic_impact = "➖ Neutra"
+                actual_f = float(actual)
+                forecast_f = float(forecast)
+                if actual_f > forecast_f:
+                    impact_logic = "📈 Positivo"
+                elif actual_f < forecast_f:
+                    impact_logic = "📉 Negativo"
             except ValueError:
-                logic_impact = ""
+                pass  # lascia vuoto se non numerico
 
         message = (
             f"📊 HIGH IMPACT NEWS\n"
@@ -120,11 +120,10 @@ def process_news(initial=False, daily=False):
             f"⚡ Impact: {event.get('impact')}\n"
             f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M %Z')}\n"
             f"📈 Previous: {event.get('previous')}\n"
-            f"📊 Actual: {event.get('actual')}\n"
-            f"🔮 Forecast: {event.get('forecast')}\n"
+            f"📊 Actual: {actual}\n"
+            f"🔮 Forecast: {forecast}\n"
+            f"{impact_logic}"
         )
-        if logic_impact:
-            message += f"💡 Logic Impact: {logic_impact}"
 
         send_message(message)
         sent_events.add(event_id)
@@ -145,16 +144,16 @@ def health():
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
 
-# Job ogni 15 minuti per high impact, filtro già fa USD/EUR
-scheduler.add_job(process_news, "interval", minutes=15)
-
-# Job giornaliero alle 7 AM UTC+1 (adatta automaticamente l'orario)
-scheduler.add_job(
-    lambda: process_news(daily=True),
-    CronTrigger(hour=6, minute=0, day_of_week="mon-fri", timezone=pytz.utc)
+# Job giornaliero alle 7:00 UTC+1, lun-ven
+trigger = CronTrigger(
+    hour=6, minute=0,  # 7:00 UTC+1 = 6:00 UTC
+    day_of_week="mon-fri",
+    timezone=pytz.utc
 )
+scheduler.add_job(process_news, trigger)
 
 scheduler.start()
-
 logging.info("Scheduler avviato")
+
+# Messaggio all'avvio
 process_news(initial=True)
