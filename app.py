@@ -38,9 +38,9 @@ def send_message(text):
             text=text,
             parse_mode="Markdown"
         )
-        logging.info("Messaggio inviato")
+        logging.info("Messaggio inviato su Telegram")
     except Exception as e:
-        logging.error(f"Errore Telegram: {e}")
+        logging.error(f"Errore invio Telegram: {e}")
 
 # ==============================
 # FOREX NEWS
@@ -103,18 +103,18 @@ def health():
 # ==============================
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
-scheduler.add_job(process_news, "interval", minutes=5)
-scheduler.start()
+
+def start_scheduler():
+    scheduler.add_job(process_news, "interval", minutes=5)
+    scheduler.start()
+    logging.info("Scheduler avviato")
 
 # ==============================
-# STARTUP
+# AVVIO CON GUNICORN
 # ==============================
 
-if __name__ == "__main__":
-    logging.info("Avvio applicazione Docker...")
-
-    # Esegue invio iniziale
+@app.before_first_request
+def startup():
+    logging.info("Avvio iniziale bot...")
     process_news(initial=True)
-
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    start_scheduler()
