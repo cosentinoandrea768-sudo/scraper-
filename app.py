@@ -14,7 +14,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 if not BOT_TOKEN or not CHAT_ID:
-    raise RuntimeError("BOT_TOKEN e CHAT_ID devono essere impostati")
+    raise RuntimeError("BOT_TOKEN e CHAT_ID devono essere impostati su Render")
 
 FOREX_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
@@ -43,7 +43,7 @@ def send_message(text):
         logging.error(f"Errore invio Telegram: {e}")
 
 # ==============================
-# FOREX NEWS
+# FOREX
 # ==============================
 
 def fetch_news():
@@ -68,9 +68,9 @@ def process_news(initial=False):
     ]
 
     if initial:
-        send_message("🚀 *Bot avviato correttamente!*")
+        send_message("🚀 Bot avviato correttamente!")
         if high_impact:
-            send_message("📌 *Eventi High Impact di questa settimana:*")
+            send_message("📌 Eventi High Impact di questa settimana:")
 
     for event in high_impact:
         event_id = event.get("id")
@@ -79,7 +79,7 @@ def process_news(initial=False):
             continue
 
         message = (
-            f"📊 *HIGH IMPACT NEWS*\n"
+            f"📊 HIGH IMPACT NEWS\n"
             f"💱 {event.get('currency')}\n"
             f"📰 {event.get('title')}\n"
             f"⏰ {event.get('date')}"
@@ -89,7 +89,7 @@ def process_news(initial=False):
         sent_events.add(event_id)
 
 # ==============================
-# FLASK
+# FLASK APP
 # ==============================
 
 app = Flask(__name__)
@@ -99,22 +99,12 @@ def health():
     return "Bot attivo", 200
 
 # ==============================
-# SCHEDULER
+# SCHEDULER START (IMPORTANTE)
 # ==============================
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
+scheduler.add_job(process_news, "interval", minutes=5)
+scheduler.start()
 
-def start_scheduler():
-    scheduler.add_job(process_news, "interval", minutes=5)
-    scheduler.start()
-    logging.info("Scheduler avviato")
-
-# ==============================
-# AVVIO CON GUNICORN
-# ==============================
-
-@app.before_first_request
-def startup():
-    logging.info("Avvio iniziale bot...")
-    process_news(initial=True)
-    start_scheduler()
+logging.info("Scheduler avviato")
+process_news(initial=True)
