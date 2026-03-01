@@ -1,15 +1,16 @@
 import os
 import logging
 import requests
+from datetime import datetime, timedelta
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Bot
-from datetime import datetime, timedelta
 import pytz
 
 # ==============================
 # CONFIG
 # ==============================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
@@ -27,7 +28,7 @@ logging.basicConfig(
 
 sent_events = set()
 
-# Mapping country -> currency
+# Mappa country -> currency (modificabile se serve)
 COUNTRY_TO_CURRENCY = {
     "United States": "USD",
     "Eurozone": "EUR",
@@ -37,11 +38,13 @@ COUNTRY_TO_CURRENCY = {
     "Switzerland": "CHF",
     "Australia": "AUD",
     "New Zealand": "NZD",
+    # aggiungi altre se vuoi
 }
 
 # ==============================
 # TELEGRAM
 # ==============================
+
 def send_message(text):
     try:
         bot.send_message(
@@ -56,6 +59,7 @@ def send_message(text):
 # ==============================
 # FOREX
 # ==============================
+
 def fetch_news():
     try:
         response = requests.get(
@@ -71,15 +75,22 @@ def fetch_news():
 
 def process_news(initial=False):
     news = fetch_news()
-    now = datetime.utcnow()
+    now = datetime.utcnow().replace(tzinfo=pytz.utc)
     week_ago = now - timedelta(days=7)
 
-    # Filtra eventi high impact della settimana passata
-    high_impact = [
-        event for event in news
-        if event.get("impact") == "High"
-        and week_ago <= datetime.fromisoformat(event.get("date")) <= now
-    ]
+    high_impact = []
+    for event in news:
+        if event.get("impact") != "High":
+            continue
+
+        try:
+            # Converte la data dell'evento in aware datetime UTC
+            event_dt = datetime.fromisoformat(event.get("date")).astimezone(pytz.utc)
+        except Exception:
+            continue
+
+        if week_ago <= event_dt <= now:
+            high_impact.append(event)
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
@@ -94,7 +105,7 @@ def process_news(initial=False):
         country = event.get("country", "")
         currency = COUNTRY_TO_CURRENCY.get(country, "N/A")
 
-        # Parsing data e ora
+        # Data formattata leggibile
         try:
             dt = datetime.fromisoformat(event.get("date")).astimezone(pytz.utc)
             date_str = dt.strftime("%Y-%m-%d %H:%M UTC")
@@ -118,6 +129,7 @@ def process_news(initial=False):
 # ==============================
 # FLASK APP
 # ==============================
+
 app = Flask(__name__)
 
 @app.route("/")
@@ -127,6 +139,7 @@ def health():
 # ==============================
 # SCHEDULER START
 # ==============================
+
 scheduler = BackgroundScheduler(timezone=pytz.utc)
 scheduler.add_job(process_news, "interval", minutes=5)
 scheduler.start()
