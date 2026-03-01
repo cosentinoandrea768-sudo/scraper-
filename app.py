@@ -61,58 +61,48 @@ def fetch_news():
         logging.error(f"Errore fetch news: {e}")
         return []
 
+def impact_logic(event):
+    """Calcola se la news è positiva o negativa confrontando actual e forecast"""
+    actual = event.get("actual")
+    forecast = event.get("forecast")
+    if actual is None or forecast is None:
+        return "⚖️ Impact: n/a"
+    try:
+        actual_val = float(actual)
+        forecast_val = float(forecast)
+        if actual_val > forecast_val:
+            return "📈 Impatto: Positivo"
+        elif actual_val < forecast_val:
+            return "📉 Impatto: Negativo"
+        else:
+            return "⚖️ Impatto: Neutro"
+    except Exception:
+        return "⚖️ Impact: n/a"
+
 def process_news(initial=False):
     news = fetch_news()
+
     now = datetime.now(timezone.utc)
 
-    # Se initial=True, manda messaggio di avvio
-    if initial:
-        send_message("🚀 Bot avviato correttamente!")
-    
-    # Filtra solo USD e EUR e High Impact
+    # Filtra solo USD/EUR e High Impact
     high_impact = [
         event for event in news
         if event.get("impact") == "High"
-        and event.get("country") in ("USD", "EUR")
+        and event.get("country") in ["USD", "EUR"]
+        and datetime.fromisoformat(event.get("date")).astimezone(timezone.utc).date() == now.date()
     ]
 
-    # Filtra le news del giorno corrente UTC+1
-    utc1 = pytz.timezone("Etc/GMT-1")
-    today = now.astimezone(utc1).date()
+    if initial:
+        send_message("🚀 Bot avviato correttamente!")
+        if high_impact:
+            send_message("📌 Eventi High Impact USD/EUR di oggi:")
 
-    todays_news = []
     for event in high_impact:
-        event_date = datetime.fromisoformat(event.get("date")).astimezone(utc1)
-        if event_date.date() == today:
-            todays_news.append((event, event_date))
-
-    if not todays_news and initial:
-        send_message("📌 Nessuna news High Impact USD/EUR oggi")
-        return
-
-    if initial and todays_news:
-        send_message("📌 Eventi High Impact USD/EUR di oggi:")
-
-    for event, event_date in todays_news:
         event_id = event.get("id")
         if event_id in sent_events:
             continue
 
-        # Calcolo positivo/negativo se actual disponibile
-        actual = event.get("actual")
-        forecast = event.get("forecast")
-        impact_logic = ""
-        if actual is not None and forecast is not None:
-            try:
-                actual_f = float(actual)
-                forecast_f = float(forecast)
-                if actual_f > forecast_f:
-                    impact_logic = "📈 Positivo"
-                elif actual_f < forecast_f:
-                    impact_logic = "📉 Negativo"
-            except ValueError:
-                pass  # lascia vuoto se non numerico
-
+        event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
         message = (
             f"📊 HIGH IMPACT NEWS\n"
             f"💱 Currency: {event.get('country')}\n"
@@ -120,9 +110,9 @@ def process_news(initial=False):
             f"⚡ Impact: {event.get('impact')}\n"
             f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M %Z')}\n"
             f"📈 Previous: {event.get('previous')}\n"
-            f"📊 Actual: {actual}\n"
-            f"🔮 Forecast: {forecast}\n"
-            f"{impact_logic}"
+            f"📊 Actual: {event.get('actual')}\n"
+            f"🔮 Forecast: {event.get('forecast')}\n"
+            f"{impact_logic(event)}"
         )
 
         send_message(message)
@@ -144,16 +134,10 @@ def health():
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
 
-# Job giornaliero alle 7:00 UTC+1, lun-ven
-trigger = CronTrigger(
-    hour=6, minute=0,  # 7:00 UTC+1 = 6:00 UTC
-    day_of_week="mon-fri",
-    timezone=pytz.utc
-)
-scheduler.add_job(process_news, trigger)
-
+# Job giornaliero alle 7:00 AM UTC+1 (6:00 UTC)
+trigger_daily = CronTrigger(hour=6, minute=0, day_of_week="mon-fri", timezone=pytz.utc)
+scheduler.add_job(process_news, trigger_daily)
 scheduler.start()
-logging.info("Scheduler avviato")
 
-# Messaggio all'avvio
+logging.info("Scheduler avviato")
 process_news(initial=True)
