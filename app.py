@@ -67,25 +67,25 @@ def process_news(initial=False):
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
 
-    # Filtro High Impact e solo USD o EUR
+    # Filtra solo High Impact e currency USD/EUR
     high_impact = [
         event for event in news
         if event.get("impact") == "High"
         and event.get("country") in ("USD", "EUR")
-        and week_ago <= datetime.fromisoformat(event.get("date")) <= now
+        and event.get("date") is not None
+        and week_ago <= datetime.fromisoformat(event.get("date")).astimezone(timezone.utc) <= now
     ]
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
         if high_impact:
-            send_message("📌 Eventi High Impact della settimana (USD & EUR):")
+            send_message("📌 Eventi High Impact di USD/EUR della settimana:")
 
     for event in high_impact:
         event_id = event.get("id")
         if event_id in sent_events:
             continue
 
-        # Data/ora UTC ben formattata
         event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
         message = (
             f"📊 HIGH IMPACT NEWS\n"
