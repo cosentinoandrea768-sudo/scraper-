@@ -6,16 +6,16 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Bot
 from datetime import datetime, timedelta, timezone
 import pytz
+from dateutil import parser as date_parser
 
 # ==============================
-# CONFIG
+# CONFIGURAZIONE
 # ==============================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID   = os.getenv("CHAT_ID")
 
 if not BOT_TOKEN or not CHAT_ID:
-    raise RuntimeError("BOT_TOKEN e CHAT_ID devono essere impostati su Render")
+    raise RuntimeError("BOT_TOKEN e CHAT_ID devono essere impostati nelle variabili d'ambiente di Render")
 
 FOREX_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
@@ -28,123 +28,138 @@ logging.basicConfig(
 
 sent_events = set()
 
+# Mappa paese → valuta (puoi espandere se necessario)
+COUNTRY_TO_CURRENCY = {
+    "United States": "USD",
+    "Eurozone":      "EUR",
+    "Japan":         "JPY",
+    "United Kingdom": "GBP",
+    "Canada":        "CAD",
+    "Australia":     "AUD",
+    "Switzerland":   "CHF",
+    "China":         "CNY",
+    "New Zealand":   "NZD",
+}
+
 # ==============================
 # TELEGRAM
 # ==============================
-
 def send_message(text):
     try:
         bot.send_message(
             chat_id=CHAT_ID,
             text=text,
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            disable_web_page_preview=True
         )
-        logging.info("Messaggio inviato su Telegram")
+        logging.info("Messaggio Telegram inviato con successo")
     except Exception as e:
-        logging.error(f"Errore invio Telegram: {e}")
+        logging.error(f"Errore invio messaggio Telegram: {e}")
 
 # ==============================
-# FOREX
+# FETCH & PROCESS NEWS
 # ==============================
-
 def fetch_news():
     try:
-        response = requests.get(
+        resp = requests.get(
             FOREX_URL,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=15
+            headers={"User-Agent": "Mozilla/5.0 (compatible; ForexNewsBot/1.0)"},
+            timeout=12
         )
-        response.raise_for_status()
-        return response.json()
+        resp.raise_for_status()
+        data = resp.json()
+        logging.info(f"Scaricati {len(data)} eventi dal calendario Forex Factory")
+        return data
     except Exception as e:
-        logging.error(f"Errore fetch news: {e}")
+        logging.error(f"Errore durante fetch news: {e}")
         return []
 
 def process_news(initial=False):
     news = fetch_news()
+    if not news:
+        if initial:
+            send_message("🚀 Bot avviato, ma nessun dato ricevuto dal calendario al momento.")
+        return
 
-    now = datetime.now(timezone.utc)
-    week_ago = now - timedelta(days=7)
+    now_utc = datetime.now(timezone.utc)
+    time_window_start = now_utc - timedelta(hours=36)     # ultimi ~1.5 giorni
+    time_window_end   = now_utc + timedelta(days=7)       # prossimi 7 giorni
 
-    # Country -> Currency professionale
-    COUNTRY_TO_CURRENCY = {
-        "United States": "USD",
-        "Eurozone": "EUR",
-        "Japan": "JPY",
-        "United Kingdom": "GBP",
-        "Canada": "CAD",
-        "Australia": "AUD",
-        "Switzerland": "CHF",
-        "China": "CNY",
-    }
+    high_impact_events = []
 
-    high_impact = []
     for event in news:
-        if event.get("impact") != "High":
+        impact = (event.get("impact") or "").strip()
+        if impact != "High":
             continue
-        if not event.get("country"):
+
+        date_str = event.get("date")
+        if not date_str:
             continue
 
         try:
-            event_date = datetime.fromisoformat(event.get("date"))
-            if event_date.tzinfo is None:
-                event_date = event_date.replace(tzinfo=timezone.utc)
-        except Exception:
+            # Parsa la data con offset (es: 2026-03-02T10:00:00-05:00)
+            event_dt = date_parser.parse(date_str)
+            # Converti tutto in UTC
+            event_dt_utc = event_dt.astimezone(timezone.utc)
+        except Exception as e:
+            logging.warning(f"Impossibile parsare data '{date_str}': {e}")
             continue
 
-        if not (week_ago <= event_date <= now):
+        # Filtra per finestra temporale
+        if not (time_window_start <= event_dt_utc <= time_window_end):
             continue
 
-        high_impact.append(event)
+        high_impact_events.append((event, event_dt_utc))
+
+    logging.info(f"Trovati {len(high_impact_events)} eventi High Impact nella finestra temporale")
 
     if initial:
-        send_message("🚀 Bot avviato correttamente!")
-        if high_impact:
-            send_message("📌 Eventi High Impact della settimana:")
+        send_message("🚀 *Bot Forex News avviato correttamente!*\nControllo ogni 5 minuti per eventi High Impact.")
+        if high_impact_events:
+            send_message(f"📢 Trovati *{len(high_impact_events)}* eventi High Impact nei prossimi giorni / recenti.")
 
-    for event in high_impact:
-        event_id = event.get("id")
+    for event, event_dt_utc in high_impact_events:
+        event_id = event.get("id") or f"{event.get('title','?')}_{event_dt_utc.isoformat(timespec='minutes')}"
         if event_id in sent_events:
             continue
 
-        event_date = datetime.fromisoformat(event.get("date"))
-        if event_date.tzinfo is None:
-            event_date = event_date.replace(tzinfo=timezone.utc)
-        event_date = event_date.astimezone(timezone.utc)
+        currency = COUNTRY_TO_CURRENCY.get(event.get("country"), event.get("country", "—"))
 
-        currency = COUNTRY_TO_CURRENCY.get(event.get("country"), event.get("country"))
-
-        message = (
-            f"📊 HIGH IMPACT NEWS\n"
-            f"💱 Currency: {currency}\n"
-            f"📰 Event: {event.get('title')}\n"
-            f"⚡ Impact: {event.get('impact')}\n"
-            f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M %Z')}\n"
-            f"📈 Previous: {event.get('previous')}\n"
-            f"📊 Actual: {event.get('actual')}\n"
-            f"🔮 Forecast: {event.get('forecast')}"
+        msg = (
+            f"📊 **HIGH IMPACT EVENT**\n"
+            f"💱 Valuta: **{currency}**\n"
+            f"📰 Evento: {event.get('title', '—')}\n"
+            f"⚡ Impatto: {impact}\n"
+            f"⏰ Ora (UTC): {event_dt_utc.strftime('%Y-%m-%d %H:%M UTC')}\n"
+            f"📈 Prec.: {event.get('previous', '—')}\n"
+            f"🔮 Previsto: {event.get('forecast', '—')}\n"
+            f"📊 Effettivo: {event.get('actual', '—')}"
         )
 
-        send_message(message)
+        send_message(msg)
         sent_events.add(event_id)
+        logging.info(f"Inviato evento: {event.get('title')} – {currency}")
 
 # ==============================
-# FLASK APP
+# FLASK per health check di Render
 # ==============================
-
 app = Flask(__name__)
 
 @app.route("/")
 def health():
-    return "Bot attivo", 200
+    return "Bot Forex News è attivo", 200
 
 # ==============================
-# SCHEDULER START
+# AVVIO SCHEDULER e prima esecuzione
+# (eseguito al caricamento del modulo – corretto con Gunicorn)
 # ==============================
-
 scheduler = BackgroundScheduler(timezone=pytz.utc)
-scheduler.add_job(process_news, "interval", minutes=5)
+scheduler.add_job(func=process_news, trigger="interval", minutes=5)
 scheduler.start()
+logging.info("Scheduler avviato – controllo ogni 5 minuti")
 
-logging.info("Scheduler avviato")
+# Esecuzione iniziale al boot
 process_news(initial=True)
+
+# Nota: NON mettere app.run() qui
+# Gunicorn si occuperà di servire l'app Flask
