@@ -28,6 +28,8 @@ logging.basicConfig(
 )
 
 sent_events = set()
+updated_events = set()
+scheduled_events = set()
 
 # ==============================
 # TELEGRAM
@@ -61,62 +63,161 @@ def fetch_news():
         logging.error(f"Errore fetch news: {e}")
         return []
 
+# ==============================
+# IMPACT LOGIC PROFESSIONALE
+# ==============================
+
 def impact_logic(event):
-    """Calcola se la news è positiva o negativa confrontando actual e forecast"""
     actual = event.get("actual")
     forecast = event.get("forecast")
+    title = event.get("title", "").lower()
+
     if actual is None or forecast is None:
-        return "⚖️ Impact: n/a"
+        return "⚖️ Impatto: n/a"
+
     try:
         actual_val = float(actual)
         forecast_val = float(forecast)
-        if actual_val > forecast_val:
-            return "📈 Impatto: Positivo"
-        elif actual_val < forecast_val:
-            return "📉 Impatto: Negativo"
-        else:
-            return "⚖️ Impatto: Neutro"
-    except Exception:
-        return "⚖️ Impact: n/a"
 
-def process_news(initial=False):
+        inverse_keywords = [
+            "unemployment",
+            "jobless",
+            "claims"
+        ]
+
+        is_inverse = any(word in title for word in inverse_keywords)
+
+        if is_inverse:
+            if actual_val < forecast_val:
+                return "📈 Impatto: Positivo"
+            elif actual_val > forecast_val:
+                return "📉 Impatto: Negativo"
+            else:
+                return "⚖️ Impatto: Neutro"
+        else:
+            if actual_val > forecast_val:
+                return "📈 Impatto: Positivo"
+            elif actual_val < forecast_val:
+                return "📉 Impatto: Negativo"
+            else:
+                return "⚖️ Impatto: Neutro"
+
+    except Exception:
+        return "⚖️ Impatto: n/a"
+
+# ==============================
+# UPDATE CON RETRY AUTOMATICO
+# ==============================
+
+def check_event_update(event_id, retry_count=0):
+
+    MAX_RETRY = 5
+    RETRY_DELAY_MINUTES = 2
+
     news = fetch_news()
 
+    for event in news:
+        if event.get("id") == event_id:
+
+            actual = event.get("actual")
+
+            if actual is None:
+                if retry_count < MAX_RETRY:
+                    logging.info(f"Actual non disponibile per {event_id}, retry {retry_count+1}")
+
+                    scheduler.add_job(
+                        check_event_update,
+                        trigger="date",
+                        run_date=datetime.now(timezone.utc) + timedelta(minutes=RETRY_DELAY_MINUTES),
+                        args=[event_id, retry_count + 1]
+                    )
+                else:
+                    logging.info(f"Max retry raggiunto per {event_id}")
+                return
+
+            if event_id in updated_events:
+                return
+
+            update_message = (
+                f"📊 AGGIORNAMENTO NEWS\n"
+                f"💱 Currency: {event.get('country')}\n"
+                f"📰 Event: {event.get('title')}\n"
+                f"📊 Actual: {actual}\n"
+                f"🔮 Forecast: {event.get('forecast')}\n"
+                f"{impact_logic(event)}"
+            )
+
+            send_message(update_message)
+            updated_events.add(event_id)
+            logging.info(f"Aggiornamento inviato per evento {event_id}")
+            return
+
+# ==============================
+# PROCESS NEWS GIORNALIERO
+# ==============================
+
+def process_news(initial=False):
+
+    news = fetch_news()
     now = datetime.now(timezone.utc)
 
-    # Filtra solo USD/EUR e High Impact
     high_impact = [
         event for event in news
         if event.get("impact") == "High"
         and event.get("country") in ["USD", "EUR"]
-        and datetime.fromisoformat(event.get("date")).astimezone(timezone.utc).date() == now.date()
+        and datetime.fromisoformat(
+            event.get("date").replace("Z", "+00:00")
+        ).astimezone(timezone.utc).date() == now.date()
     ]
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
-        if high_impact:
-            send_message("📌 Eventi High Impact USD/EUR di oggi:")
+
+    if not high_impact:
+        send_message("📌 Oggi non ci sono eventi High Impact USD/EUR")
+        return
+
+    send_message("📌 Eventi High Impact USD/EUR di oggi:")
 
     for event in high_impact:
+
         event_id = event.get("id")
-        if event_id in sent_events:
-            continue
 
-        event_date = datetime.fromisoformat(event.get("date")).astimezone(timezone.utc)
-        message = (
-            f"📊 HIGH IMPACT NEWS\n"
-            f"💱 Currency: {event.get('country')}\n"
-            f"📰 Event: {event.get('title')}\n"
-            f"⚡ Impact: {event.get('impact')}\n"
-            f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M %Z')}\n"
-            f"📈 Previous: {event.get('previous')}\n"
-            f"📊 Actual: {event.get('actual')}\n"
-            f"🔮 Forecast: {event.get('forecast')}\n"
-            f"{impact_logic(event)}"
-        )
+        event_date = datetime.fromisoformat(
+            event.get("date").replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
 
-        send_message(message)
-        sent_events.add(event_id)
+        # INVIO NEWS GIORNALIERA
+        if event_id not in sent_events:
+
+            message = (
+                f"📊 HIGH IMPACT NEWS\n"
+                f"💱 Currency: {event.get('country')}\n"
+                f"📰 Event: {event.get('title')}\n"
+                f"⚡ Impact: {event.get('impact')}\n"
+                f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                f"📈 Previous: {event.get('previous')}\n"
+                f"📊 Actual: {event.get('actual')}\n"
+                f"🔮 Forecast: {event.get('forecast')}"
+            )
+
+            send_message(message)
+            sent_events.add(event_id)
+
+        # SCHEDULAZIONE CONTROLLO ACTUAL
+        if event_id not in scheduled_events and event_date > now:
+
+            run_time = event_date + timedelta(minutes=1)
+
+            scheduler.add_job(
+                check_event_update,
+                trigger="date",
+                run_date=run_time,
+                args=[event_id]
+            )
+
+            scheduled_events.add(event_id)
+            logging.info(f"Schedulato controllo per evento {event_id}")
 
 # ==============================
 # FLASK APP
@@ -129,13 +230,18 @@ def health():
     return "Bot attivo", 200
 
 # ==============================
-# SCHEDULER START
+# SCHEDULER
 # ==============================
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
 
-# Job giornaliero alle 7:00 AM UTC+1 (6:00 UTC)
-trigger_daily = CronTrigger(hour=6, minute=0, day_of_week="mon-fri", timezone=pytz.utc)
+trigger_daily = CronTrigger(
+    hour=6,
+    minute=0,
+    day_of_week="mon-fri",
+    timezone=pytz.utc
+)
+
 scheduler.add_job(process_news, trigger_daily)
 scheduler.start()
 
