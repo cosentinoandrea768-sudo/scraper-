@@ -30,12 +30,6 @@ logging.basicConfig(
 italy_tz = pytz.timezone("Europe/Rome")
 
 # ==============================
-# GLOBAL STATE
-# ==============================
-
-monitored_events = {}
-
-# ==============================
 # TELEGRAM
 # ==============================
 
@@ -63,65 +57,20 @@ def fetch_news():
         )
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.HTTPError as e:
-        if response.status_code == 429:
-            logging.warning("429 Too Many Requests")
-        else:
-            logging.error(f"HTTP error: {e}")
-        return []
     except Exception as e:
         logging.error(f"Errore fetch news: {e}")
         return []
-
-# ==============================
-# IMPACT LOGIC
-# ==============================
-
-def impact_logic(event):
-    actual = event.get("actual")
-    forecast = event.get("forecast")
-    title = event.get("title", "").lower()
-
-    if not actual or not forecast:
-        return "⚖️ Impatto: n/a"
-
-    try:
-        actual_val = float(str(actual).replace("%", "").replace("K","000"))
-        forecast_val = float(str(forecast).replace("%", "").replace("K","000"))
-
-        inverse_keywords = ["unemployment", "jobless", "claims"]
-        is_inverse = any(word in title for word in inverse_keywords)
-
-        if is_inverse:
-            if actual_val < forecast_val:
-                return "📈 Impatto: Positivo"
-            elif actual_val > forecast_val:
-                return "📉 Impatto: Negativo"
-            else:
-                return "⚖️ Impatto: Neutro"
-        else:
-            if actual_val > forecast_val:
-                return "📈 Impatto: Positivo"
-            elif actual_val < forecast_val:
-                return "📉 Impatto: Negativo"
-            else:
-                return "⚖️ Impatto: Neutro"
-
-    except Exception:
-        return "⚖️ Impatto: n/a"
 
 # ==============================
 # PROCESS NEWS GIORNALIERO
 # ==============================
 
 def process_news(initial=False):
-    global monitored_events
 
     news = fetch_news()
     if not news:
+        logging.info("Nessuna news trovata")
         return
-
-    monitored_events = {}
 
     now = datetime.now(timezone.utc)
     start_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -158,10 +107,6 @@ def process_news(initial=False):
                 f"📈 Previous: {event.get('previous') or 'n/a'}\n\n"
             )
 
-            # Salviamo evento per monitoraggio actual
-            key = (event.get("title"), event.get("country"))
-            monitored_events[key] = event
-
         except Exception:
             continue
 
@@ -172,59 +117,7 @@ def process_news(initial=False):
         send_message("📌 Oggi non ci sono eventi High Impact USD/EUR")
         return
 
-    message += 'Aggiornamento dato quando esce "actual"'
     send_message(message)
-
-# ==============================
-# CONTROLLO ACTUAL
-# ==============================
-
-def check_all_events_update():
-    global monitored_events
-
-    if not monitored_events:
-        logging.info("Nessun evento da monitorare")
-        return
-
-    news = fetch_news()
-    if not news:
-        return
-
-    for key in list(monitored_events.keys()):
-        title, country = key
-
-        updated_item = next(
-            (
-                item for item in news
-                if item.get("title") == title
-                and item.get("country") == country
-            ),
-            None
-        )
-
-        if not updated_item:
-            continue
-
-        actual_value = updated_item.get("actual")
-
-        if actual_value not in [None, ""]:
-            country_flag = "🇺🇸" if country == "USD" else "🇪🇺"
-
-            update_message = (
-                f"📊 *AGGIORNAMENTO NEWS*\n\n"
-                f"{country_flag} {country}\n"
-                f"📰 {title}\n"
-                f"📊 Actual: {updated_item.get('actual')}\n"
-                f"🔮 Forecast: {updated_item.get('forecast') or 'n/a'}\n"
-                f"{impact_logic(updated_item)}"
-            )
-
-            send_message(update_message)
-            monitored_events.pop(key)
-
-            logging.info(f"Actual inviato per {title}")
-        else:
-            logging.info(f"Actual non ancora disponibile per {title}")
 
 # ==============================
 # FLASK APP
@@ -250,18 +143,8 @@ scheduler.add_job(
     coalesce=True
 )
 
-scheduler.add_job(
-    check_all_events_update,
-    "interval",
-    minutes=5,
-    id="actual_update_job",
-    next_run_time=datetime.now(pytz.utc) + timedelta(minutes=5),
-    max_instances=1,
-    coalesce=True
-)
-
 scheduler.start()
 logging.info("Scheduler avviato")
 
-# Avvio iniziale
+# Avvio iniziale al deploy
 process_news(initial=True)
