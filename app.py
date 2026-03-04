@@ -7,6 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
 from datetime import datetime, timedelta, timezone
 import pytz
+import re
 
 # ==============================
 # CONFIG
@@ -29,7 +30,6 @@ logging.basicConfig(
 
 italy_tz = pytz.timezone("Europe/Rome")
 
-# Tracking runtime
 scheduled_events = set()
 updated_events = set()
 
@@ -57,7 +57,7 @@ def fetch_news():
         response = requests.get(
             FOREX_URL,
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=15
+            timeout=20
         )
         response.raise_for_status()
         return response.json()
@@ -66,51 +66,71 @@ def fetch_news():
         return []
 
 # ==============================
-# GENERAZIONE ID UNIVOCO
+# ID EVENTO STABILE
 # ==============================
 
 def generate_event_id(event):
-    return f"{event.get('title')}_{event.get('date')}_{event.get('country')}"
+    # NON usiamo la date per evitare mismatch
+    return f"{event.get('title')}_{event.get('country')}"
+
+# ==============================
+# PARSE NUMERICO ROBUSTO
+# ==============================
+
+def parse_number(value):
+    if not value:
+        return None
+
+    try:
+        value = value.replace("%", "").replace(",", "").strip()
+
+        multiplier = 1
+        if value.endswith("K"):
+            multiplier = 1_000
+            value = value[:-1]
+        elif value.endswith("M"):
+            multiplier = 1_000_000
+            value = value[:-1]
+
+        return float(value) * multiplier
+    except:
+        return None
 
 # ==============================
 # IMPACT LOGIC
 # ==============================
 
 def impact_logic(event):
-    actual = event.get("actual")
-    forecast = event.get("forecast")
+    actual_raw = event.get("actual")
+    forecast_raw = event.get("forecast")
     title = event.get("title", "").lower()
 
-    if not actual or not forecast:
+    actual = parse_number(actual_raw)
+    forecast = parse_number(forecast_raw)
+
+    if actual is None or forecast is None:
         return "⚖️ Impatto: n/a"
 
-    try:
-        actual_val = float(actual)
-        forecast_val = float(forecast)
+    inverse_keywords = ["unemployment", "jobless", "claims"]
+    is_inverse = any(word in title for word in inverse_keywords)
 
-        inverse_keywords = ["unemployment", "jobless", "claims"]
-        is_inverse = any(word in title for word in inverse_keywords)
-
-        if is_inverse:
-            if actual_val < forecast_val:
-                return "📈 Impatto: Positivo"
-            elif actual_val > forecast_val:
-                return "📉 Impatto: Negativo"
-            else:
-                return "⚖️ Impatto: Neutro"
+    if is_inverse:
+        if actual < forecast:
+            return "📈 Impatto: Positivo"
+        elif actual > forecast:
+            return "📉 Impatto: Negativo"
         else:
-            if actual_val > forecast_val:
-                return "📈 Impatto: Positivo"
-            elif actual_val < forecast_val:
-                return "📉 Impatto: Negativo"
-            else:
-                return "⚖️ Impatto: Neutro"
-
-    except:
-        return "⚖️ Impatto: n/a"
+            return "⚖️ Impatto: Neutro"
+    else:
+        if actual > forecast:
+            return "📈 Impatto: Positivo"
+        elif actual < forecast:
+            return "📉 Impatto: Negativo"
+        else:
+            return "⚖️ Impatto: Neutro"
 
 # ==============================
-# CHECK UPDATE (INTERVAL STABILE)
+# CHECK ACTUAL INTERVAL STABILE
 # ==============================
 
 def check_event_update(event_id):
@@ -122,12 +142,12 @@ def check_event_update(event_id):
 
         actual = event.get("actual")
 
-        # Se actual non disponibile continua al prossimo ciclo interval
-        if not actual:
-            logging.info(f"Actual non ancora disponibile per {event_id}")
+        invalid_values = [None, "", " ", "null", "None", "N/A"]
+
+        if actual in invalid_values:
+            logging.info(f"Actual non ancora disponibile per {event_id} → {actual}")
             return
 
-        # Se già aggiornato → rimuovi job
         if event_id in updated_events:
             try:
                 scheduler.remove_job(event_id)
@@ -147,9 +167,9 @@ def check_event_update(event_id):
         )
 
         send_message(update_message)
+
         updated_events.add(event_id)
 
-        # Stop definitivo controllo
         try:
             scheduler.remove_job(event_id)
         except:
@@ -159,7 +179,7 @@ def check_event_update(event_id):
         return
 
 # ==============================
-# PROCESS NEWS GIORNALIERO
+# PROCESS NEWS
 # ==============================
 
 def process_news(initial=False):
@@ -239,14 +259,14 @@ def process_news(initial=False):
             )
 
             scheduled_events.add(event_id)
-            logging.info(f"Schedulato controllo interval per evento {event_id}")
+            logging.info(f"Schedulato controllo interval per {event_id}")
 
     message += 'Aggiornamento dato quando esce "actual"'
 
     send_message(message)
 
 # ==============================
-# FLASK APP
+# FLASK
 # ==============================
 
 app = Flask(__name__)
