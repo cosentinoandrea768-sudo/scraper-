@@ -27,11 +27,11 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-sent_events = set()
-updated_events = set()
-scheduled_events = set()
-
 italy_tz = pytz.timezone("Europe/Rome")
+
+# Tracking runtime
+scheduled_events = set()
+updated_events = set()
 
 # ==============================
 # TELEGRAM
@@ -81,7 +81,7 @@ def impact_logic(event):
     forecast = event.get("forecast")
     title = event.get("title", "").lower()
 
-    if actual is None or forecast is None:
+    if not actual or not forecast:
         return "⚖️ Impatto: n/a"
 
     try:
@@ -106,28 +106,24 @@ def impact_logic(event):
             else:
                 return "⚖️ Impatto: Neutro"
 
-    except Exception:
+    except:
         return "⚖️ Impatto: n/a"
 
 # ==============================
-# CHECK UPDATE STABILE (OGNI 5 MINUTI)
+# CHECK UPDATE (INTERVAL STABILE)
 # ==============================
 
 def check_event_update(event_id):
-    """Controlla l'actual ogni 5 minuti finché non è disponibile"""
-
     news = fetch_news()
 
     for event in news:
-        current_id = generate_event_id(event)
-
-        if current_id != event_id:
+        if generate_event_id(event) != event_id:
             continue
 
         actual = event.get("actual")
 
-        # Se actual non è ancora uscito → continua
-        if actual is None:
+        # Se actual non disponibile continua al prossimo ciclo interval
+        if not actual:
             logging.info(f"Actual non ancora disponibile per {event_id}")
             return
 
@@ -135,11 +131,10 @@ def check_event_update(event_id):
         if event_id in updated_events:
             try:
                 scheduler.remove_job(event_id)
-            except Exception:
+            except:
                 pass
             return
 
-        # Bandiera 🇺🇸 o 🇪🇺
         country_flag = "🇺🇸" if event.get("country") == "USD" else "🇪🇺"
 
         update_message = (
@@ -152,13 +147,12 @@ def check_event_update(event_id):
         )
 
         send_message(update_message)
-
         updated_events.add(event_id)
 
-        # Stop definitivo del controllo
+        # Stop definitivo controllo
         try:
             scheduler.remove_job(event_id)
-        except Exception:
+        except:
             pass
 
         logging.info(f"Aggiornamento inviato e job rimosso per {event_id}")
@@ -227,9 +221,12 @@ def process_news(initial=False):
             f"📈 Previous: {event.get('previous')}\n\n"
         )
 
-        if event_id not in scheduled_events and event["parsed_date"] > now:
+        if event_id not in scheduled_events:
 
-            run_time = event["parsed_date"] + timedelta(minutes=1)
+            if event["parsed_date"] > now:
+                run_time = event["parsed_date"] + timedelta(minutes=1)
+            else:
+                run_time = datetime.now(timezone.utc) + timedelta(seconds=10)
 
             scheduler.add_job(
                 check_event_update,
@@ -237,7 +234,8 @@ def process_news(initial=False):
                 minutes=5,
                 id=event_id,
                 args=[event_id],
-                next_run_time=run_time
+                next_run_time=run_time,
+                replace_existing=True
             )
 
             scheduled_events.add(event_id)
