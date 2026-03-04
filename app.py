@@ -47,7 +47,7 @@ def send_message(text):
         logging.error(f"Errore invio Telegram: {e}")
 
 # ==============================
-# FOREX FETCH
+# FETCH NEWS
 # ==============================
 
 def fetch_news():
@@ -64,7 +64,14 @@ def fetch_news():
         return []
 
 # ==============================
-# IMPACT LOGIC PROFESSIONALE
+# GENERAZIONE ID UNIVOCO
+# ==============================
+
+def generate_event_id(event):
+    return f"{event.get('title')}_{event.get('date')}_{event.get('country')}"
+
+# ==============================
+# IMPACT LOGIC
 # ==============================
 
 def impact_logic(event):
@@ -101,7 +108,7 @@ def impact_logic(event):
         return "⚖️ Impatto: n/a"
 
 # ==============================
-# UPDATE EVENTO CON RETRY
+# CHECK UPDATE CON RETRY
 # ==============================
 
 def check_event_update(event_id, retry_count=0):
@@ -112,40 +119,43 @@ def check_event_update(event_id, retry_count=0):
     news = fetch_news()
 
     for event in news:
-        if event.get("id") == event_id:
 
-            actual = event.get("actual")
+        current_id = generate_event_id(event)
 
-            if actual is None:
-                if retry_count < MAX_RETRY:
-                    logging.info(f"Actual non disponibile per {event_id}, retry {retry_count+1}")
+        if current_id != event_id:
+            continue
 
-                    scheduler.add_job(
-                        check_event_update,
-                        trigger="date",
-                        run_date=datetime.now(timezone.utc) + timedelta(minutes=RETRY_DELAY_MINUTES),
-                        args=[event_id, retry_count + 1]
-                    )
-                else:
-                    logging.info(f"Max retry raggiunto per {event_id}")
-                return
+        actual = event.get("actual")
 
-            if event_id in updated_events:
-                return
+        if actual is None:
+            if retry_count < MAX_RETRY:
+                logging.info(f"Actual non disponibile per {event_id}, retry {retry_count+1}")
 
-            update_message = (
-                f"📊 AGGIORNAMENTO NEWS\n"
-                f"💱 Currency: {event.get('country')}\n"
-                f"📰 Event: {event.get('title')}\n"
-                f"📊 Actual: {actual}\n"
-                f"🔮 Forecast: {event.get('forecast')}\n"
-                f"{impact_logic(event)}"
-            )
-
-            send_message(update_message)
-            updated_events.add(event_id)
-            logging.info(f"Aggiornamento inviato per evento {event_id}")
+                scheduler.add_job(
+                    check_event_update,
+                    trigger="date",
+                    run_date=datetime.now(timezone.utc) + timedelta(minutes=RETRY_DELAY_MINUTES),
+                    args=[event_id, retry_count + 1]
+                )
+            else:
+                logging.info(f"Max retry raggiunto per {event_id}")
             return
+
+        if event_id in updated_events:
+            return
+
+        update_message = (
+            f"📊 *AGGIORNAMENTO NEWS*\n\n"
+            f"📰 {event.get('title')} ({event.get('country')})\n"
+            f"📊 Actual: {actual}\n"
+            f"🔮 Forecast: {event.get('forecast')}\n"
+            f"{impact_logic(event)}"
+        )
+
+        send_message(update_message)
+        updated_events.add(event_id)
+        logging.info(f"Aggiornamento inviato per evento {event_id}")
+        return
 
 # ==============================
 # PROCESS NEWS GIORNALIERO
@@ -175,11 +185,14 @@ def process_news(initial=False):
             ).astimezone(timezone.utc)
 
             if start_day <= event_date < end_day:
+                event["parsed_date"] = event_date
                 high_impact.append(event)
 
         except Exception as e:
             logging.warning(f"Errore parsing data evento: {e}")
             continue
+
+    high_impact.sort(key=lambda x: x["parsed_date"])
 
     logging.info(f"Trovati {len(high_impact)} eventi High Impact USD/EUR oggi")
 
@@ -190,32 +203,23 @@ def process_news(initial=False):
         send_message("📌 Oggi non ci sono eventi High Impact USD/EUR")
         return
 
-    send_message("📌 Eventi High Impact USD/EUR di oggi:")
+    # ===== MESSAGGIO UNICO =====
+
+    message = "📅 *HIGH IMPACT USD/EUR – OGGI*\n\n"
 
     for event in high_impact:
 
-        event_id = event.get("id")
+        event_id = generate_event_id(event)
+        event_date = event["parsed_date"]
 
-        event_date = datetime.fromisoformat(
-            event.get("date").replace("Z", "+00:00")
-        ).astimezone(timezone.utc)
-
-        # INVIO NEWS
-        if event_id not in sent_events:
-
-            message = (
-                f"📊 HIGH IMPACT NEWS\n"
-                f"💱 Currency: {event.get('country')}\n"
-                f"📰 Event: {event.get('title')}\n"
-                f"⚡ Impact: {event.get('impact')}\n"
-                f"⏰ Date/Time: {event_date.strftime('%Y-%m-%d %H:%M UTC')}\n"
-                f"📈 Previous: {event.get('previous')}\n"
-                f"📊 Actual: {event.get('actual')}\n"
-                f"🔮 Forecast: {event.get('forecast')}"
-            )
-
-            send_message(message)
-            sent_events.add(event_id)
+        message += (
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"🕒 *{event_date.strftime('%H:%M UTC')}*\n"
+            f"💱 {event.get('country')}\n"
+            f"📰 {event.get('title')}\n"
+            f"🔮 Forecast: {event.get('forecast')}\n"
+            f"📈 Previous: {event.get('previous')}\n\n"
+        )
 
         # SCHEDULAZIONE CONTROLLO ACTUAL
         if event_id not in scheduled_events and event_date > now:
@@ -231,6 +235,10 @@ def process_news(initial=False):
 
             scheduled_events.add(event_id)
             logging.info(f"Schedulato controllo per evento {event_id}")
+
+    message += "━━━━━━━━━━━━━━━━━━\n⚡ Monitoraggio automatico attivo."
+
+    send_message(message)
 
 # ==============================
 # FLASK APP
