@@ -110,43 +110,37 @@ def impact_logic(event):
         return "⚖️ Impatto: n/a"
 
 # ==============================
-# CHECK UPDATE CON RETRY
+# CHECK UPDATE CON CONTROLLI RICORRENTI
 # ==============================
 
-def check_event_update(event_id, retry_count=0):
-
-    MAX_RETRY = 5
-    RETRY_DELAY_MINUTES = 2
+def check_event_update(event_id):
+    """Controlla l'actual ogni 5 minuti finché non è disponibile"""
 
     news = fetch_news()
 
     for event in news:
-
         current_id = generate_event_id(event)
-
         if current_id != event_id:
             continue
 
         actual = event.get("actual")
 
         if actual is None:
-            if retry_count < MAX_RETRY:
-                logging.info(f"Actual non disponibile per {event_id}, retry {retry_count+1}")
-
-                scheduler.add_job(
-                    check_event_update,
-                    trigger="date",
-                    run_date=datetime.now(timezone.utc) + timedelta(minutes=RETRY_DELAY_MINUTES),
-                    args=[event_id, retry_count + 1]
-                )
-            else:
-                logging.info(f"Max retry raggiunto per {event_id}")
+            # Se actual non è ancora uscito, riprogramma il controllo tra 5 minuti
+            scheduler.add_job(
+                check_event_update,
+                trigger="date",
+                run_date=datetime.now(timezone.utc) + timedelta(minutes=5),
+                args=[event_id]
+            )
+            logging.info(f"Actual non disponibile per {event_id}, controllo tra 5 minuti")
             return
 
+        # Se l'evento è già aggiornato, non fare nulla
         if event_id in updated_events:
             return
 
-        # Aggiunta bandiera 🇺🇸 o 🇪🇺 davanti a USD/EUR
+        # Bandiera 🇺🇸 o 🇪🇺 davanti a USD/EUR
         country_flag = "🇺🇸" if event.get("country") == "USD" else "🇪🇺"
 
         update_message = (
