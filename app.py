@@ -110,7 +110,7 @@ def impact_logic(event):
         return "⚖️ Impatto: n/a"
 
 # ==============================
-# CHECK UPDATE CON CONTROLLI RICORRENTI
+# CHECK UPDATE STABILE (OGNI 5 MINUTI)
 # ==============================
 
 def check_event_update(event_id):
@@ -120,27 +120,26 @@ def check_event_update(event_id):
 
     for event in news:
         current_id = generate_event_id(event)
+
         if current_id != event_id:
             continue
 
         actual = event.get("actual")
 
+        # Se actual non è ancora uscito → continua
         if actual is None:
-            # Se actual non è ancora uscito, riprogramma il controllo tra 5 minuti
-            scheduler.add_job(
-                check_event_update,
-                trigger="date",
-                run_date=datetime.now(timezone.utc) + timedelta(minutes=5),
-                args=[event_id]
-            )
-            logging.info(f"Actual non disponibile per {event_id}, controllo tra 5 minuti")
+            logging.info(f"Actual non ancora disponibile per {event_id}")
             return
 
-        # Se l'evento è già aggiornato, non fare nulla
+        # Se già aggiornato → rimuovi job
         if event_id in updated_events:
+            try:
+                scheduler.remove_job(event_id)
+            except Exception:
+                pass
             return
 
-        # Bandiera 🇺🇸 o 🇪🇺 davanti a USD/EUR
+        # Bandiera 🇺🇸 o 🇪🇺
         country_flag = "🇺🇸" if event.get("country") == "USD" else "🇪🇺"
 
         update_message = (
@@ -153,8 +152,16 @@ def check_event_update(event_id):
         )
 
         send_message(update_message)
+
         updated_events.add(event_id)
-        logging.info(f"Aggiornamento inviato per evento {event_id}")
+
+        # Stop definitivo del controllo
+        try:
+            scheduler.remove_job(event_id)
+        except Exception:
+            pass
+
+        logging.info(f"Aggiornamento inviato e job rimosso per {event_id}")
         return
 
 # ==============================
@@ -210,7 +217,6 @@ def process_news(initial=False):
         event_id = generate_event_id(event)
         event_date_italy = event["parsed_date"].astimezone(italy_tz)
 
-        # Bandiera prima di USD/EUR
         country_flag = "🇺🇸" if event.get("country") == "USD" else "🇪🇺"
 
         message += (
@@ -227,13 +233,15 @@ def process_news(initial=False):
 
             scheduler.add_job(
                 check_event_update,
-                trigger="date",
-                run_date=run_time,
-                args=[event_id]
+                trigger="interval",
+                minutes=5,
+                id=event_id,
+                args=[event_id],
+                next_run_time=run_time
             )
 
             scheduled_events.add(event_id)
-            logging.info(f"Schedulato controllo per evento {event_id}")
+            logging.info(f"Schedulato controllo interval per evento {event_id}")
 
     message += 'Aggiornamento dato quando esce "actual"'
 
