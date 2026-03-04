@@ -31,6 +31,8 @@ sent_events = set()
 updated_events = set()
 scheduled_events = set()
 
+italy_tz = pytz.timezone("Europe/Rome")
+
 # ==============================
 # TELEGRAM
 # ==============================
@@ -146,7 +148,8 @@ def check_event_update(event_id, retry_count=0):
 
         update_message = (
             f"📊 *AGGIORNAMENTO NEWS*\n\n"
-            f"📰 {event.get('title')} ({event.get('country')})\n"
+            f"{event.get('country')}\n"
+            f"📰 {event.get('title')}\n"
             f"📊 Actual: {actual}\n"
             f"🔮 Forecast: {event.get('forecast')}\n"
             f"{impact_logic(event)}"
@@ -203,28 +206,24 @@ def process_news(initial=False):
         send_message("📌 Oggi non ci sono eventi High Impact USD/EUR")
         return
 
-    # ===== MESSAGGIO UNICO =====
-
     message = "📅 *HIGH IMPACT USD/EUR – OGGI*\n\n"
 
     for event in high_impact:
 
         event_id = generate_event_id(event)
-        event_date = event["parsed_date"]
+        event_date_italy = event["parsed_date"].astimezone(italy_tz)
 
         message += (
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"🕒 *{event_date.strftime('%H:%M UTC')}*\n"
-            f"💱 {event.get('country')}\n"
+            f"🕒 *{event_date_italy.strftime('%H:%M')}*\n"
+            f"{event.get('country')}\n"
             f"📰 {event.get('title')}\n"
             f"🔮 Forecast: {event.get('forecast')}\n"
             f"📈 Previous: {event.get('previous')}\n\n"
         )
 
-        # SCHEDULAZIONE CONTROLLO ACTUAL
-        if event_id not in scheduled_events and event_date > now:
+        if event_id not in scheduled_events and event["parsed_date"] > now:
 
-            run_time = event_date + timedelta(minutes=1)
+            run_time = event["parsed_date"] + timedelta(minutes=1)
 
             scheduler.add_job(
                 check_event_update,
@@ -236,7 +235,7 @@ def process_news(initial=False):
             scheduled_events.add(event_id)
             logging.info(f"Schedulato controllo per evento {event_id}")
 
-    message += "━━━━━━━━━━━━━━━━━━\n⚡ Monitoraggio automatico attivo."
+    message += 'Aggiornamento dato quando esce "actual"'
 
     send_message(message)
 
