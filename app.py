@@ -47,7 +47,7 @@ def send_message(text):
         logging.error(f"Errore invio Telegram: {e}")
 
 # ==============================
-# FOREX
+# FOREX FETCH
 # ==============================
 
 def fetch_news():
@@ -79,12 +79,7 @@ def impact_logic(event):
         actual_val = float(actual)
         forecast_val = float(forecast)
 
-        inverse_keywords = [
-            "unemployment",
-            "jobless",
-            "claims"
-        ]
-
+        inverse_keywords = ["unemployment", "jobless", "claims"]
         is_inverse = any(word in title for word in inverse_keywords)
 
         if is_inverse:
@@ -106,7 +101,7 @@ def impact_logic(event):
         return "⚖️ Impatto: n/a"
 
 # ==============================
-# UPDATE CON RETRY AUTOMATICO
+# UPDATE EVENTO CON RETRY
 # ==============================
 
 def check_event_update(event_id, retry_count=0):
@@ -161,14 +156,32 @@ def process_news(initial=False):
     news = fetch_news()
     now = datetime.now(timezone.utc)
 
-    high_impact = [
-        event for event in news
-        if event.get("impact") == "High"
-        and event.get("country") in ["USD", "EUR"]
-        and datetime.fromisoformat(
-            event.get("date").replace("Z", "+00:00")
-        ).astimezone(timezone.utc).date() == now.date()
-    ]
+    high_impact = []
+
+    start_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_day = start_day + timedelta(days=1)
+
+    for event in news:
+
+        if event.get("impact") != "High":
+            continue
+
+        if event.get("country") not in ["USD", "EUR"]:
+            continue
+
+        try:
+            event_date = datetime.fromisoformat(
+                event.get("date").replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+
+            if start_day <= event_date < end_day:
+                high_impact.append(event)
+
+        except Exception as e:
+            logging.warning(f"Errore parsing data evento: {e}")
+            continue
+
+    logging.info(f"Trovati {len(high_impact)} eventi High Impact USD/EUR oggi")
 
     if initial:
         send_message("🚀 Bot avviato correttamente!")
@@ -187,7 +200,7 @@ def process_news(initial=False):
             event.get("date").replace("Z", "+00:00")
         ).astimezone(timezone.utc)
 
-        # INVIO NEWS GIORNALIERA
+        # INVIO NEWS
         if event_id not in sent_events:
 
             message = (
@@ -246,4 +259,5 @@ scheduler.add_job(process_news, trigger_daily)
 scheduler.start()
 
 logging.info("Scheduler avviato")
+
 process_news(initial=True)
