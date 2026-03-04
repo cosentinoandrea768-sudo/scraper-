@@ -16,7 +16,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 if not BOT_TOKEN or not CHAT_ID:
-    raise RuntimeError("BOT_TOKEN e CHAT_ID devono essere impostati su Render")
+    raise RuntimeError("BOT_TOKEN e CHAT_ID devono essere impostati")
 
 FOREX_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
@@ -33,9 +33,7 @@ italy_tz = pytz.timezone("Europe/Rome")
 # GLOBAL STATE
 # ==============================
 
-high_impact_events = []
 monitored_events = {}
-updated_events = set()
 
 # ==============================
 # TELEGRAM
@@ -61,28 +59,19 @@ def fetch_news():
         response = requests.get(
             FOREX_URL,
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=15
+            timeout=20
         )
         response.raise_for_status()
         return response.json()
-
     except requests.exceptions.HTTPError as e:
         if response.status_code == 429:
-            logging.warning("429 Too Many Requests - rate limit raggiunto")
+            logging.warning("429 Too Many Requests")
         else:
             logging.error(f"HTTP error: {e}")
         return []
-
     except Exception as e:
         logging.error(f"Errore fetch news: {e}")
         return []
-
-# ==============================
-# GENERAZIONE ID UNIVOCO
-# ==============================
-
-def generate_event_id(event):
-    return f"{event.get('title')}_{event.get('date')}_{event.get('country')}"
 
 # ==============================
 # IMPACT LOGIC
@@ -97,8 +86,8 @@ def impact_logic(event):
         return "⚖️ Impatto: n/a"
 
     try:
-        actual_val = float(str(actual).replace("%", ""))
-        forecast_val = float(str(forecast).replace("%", ""))
+        actual_val = float(str(actual).replace("%", "").replace("K","000"))
+        forecast_val = float(str(forecast).replace("%", "").replace("K","000"))
 
         inverse_keywords = ["unemployment", "jobless", "claims"]
         is_inverse = any(word in title for word in inverse_keywords)
@@ -126,19 +115,20 @@ def impact_logic(event):
 # ==============================
 
 def process_news(initial=False):
-    global high_impact_events, monitored_events
+    global monitored_events
 
     news = fetch_news()
     if not news:
-        logging.info("Nessuna news disponibile")
         return
+
+    monitored_events = {}
 
     now = datetime.now(timezone.utc)
     start_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end_day = start_day + timedelta(days=1)
 
-    high_impact_events = []
-    monitored_events = {}
+    message = "📅 *HIGH IMPACT USD/EUR – OGGI*\n\n"
+    found = False
 
     for event in news:
         if event.get("impact") != "High":
@@ -152,92 +142,89 @@ def process_news(initial=False):
                 event.get("date").replace("Z", "+00:00")
             ).astimezone(timezone.utc)
 
-            if start_day <= event_date < end_day:
-                event["parsed_date"] = event_date
-                high_impact_events.append(event)
+            if not (start_day <= event_date < end_day):
+                continue
+
+            found = True
+
+            event_date_it = event_date.astimezone(italy_tz)
+            country_flag = "🇺🇸" if event.get("country") == "USD" else "🇪🇺"
+
+            message += (
+                f"🕒 *{event_date_it.strftime('%H:%M')}*\n"
+                f"{country_flag} {event.get('country')}\n"
+                f"📰 {event.get('title')}\n"
+                f"🔮 Forecast: {event.get('forecast') or 'n/a'}\n"
+                f"📈 Previous: {event.get('previous') or 'n/a'}\n\n"
+            )
+
+            # Salviamo evento per monitoraggio actual
+            key = (event.get("title"), event.get("country"))
+            monitored_events[key] = event
 
         except Exception:
             continue
 
-    high_impact_events.sort(key=lambda x: x["parsed_date"])
-
-    logging.info(f"Trovati {len(high_impact_events)} eventi High Impact USD/EUR oggi")
-
     if initial:
         send_message("🚀 Bot avviato correttamente!")
 
-    if not high_impact_events:
+    if not found:
         send_message("📌 Oggi non ci sono eventi High Impact USD/EUR")
         return
 
-    message = "📅 *HIGH IMPACT USD/EUR – OGGI*\n\n"
-
-    for event in high_impact_events:
-        event_id = generate_event_id(event)
-        event_date_italy = event["parsed_date"].astimezone(italy_tz)
-        country_flag = "🇺🇸" if event.get("country") == "USD" else "🇪🇺"
-
-        message += (
-            f"🕒 *{event_date_italy.strftime('%H:%M')}*\n"
-            f"{country_flag} {event.get('country')}\n"
-            f"📰 {event.get('title')}\n"
-            f"🔮 Forecast: {event.get('forecast') or 'n/a'}\n"
-            f"📈 Previous: {event.get('previous') or 'n/a'}\n\n"
-        )
-
-        monitored_events[event_id] = event
-
     message += 'Aggiornamento dato quando esce "actual"'
-
     send_message(message)
 
 # ==============================
-# MONITORAGGIO ACTUAL
+# CONTROLLO ACTUAL
 # ==============================
 
 def check_all_events_update():
-    global monitored_events, updated_events
+    global monitored_events
 
     if not monitored_events:
+        logging.info("Nessun evento da monitorare")
         return
 
     news = fetch_news()
     if not news:
         return
 
-    for event_id in list(monitored_events.keys()):
-        original_event = monitored_events[event_id]
+    for key in list(monitored_events.keys()):
+        title, country = key
 
         updated_item = next(
-            (item for item in news if generate_event_id(item) == event_id),
+            (
+                item for item in news
+                if item.get("title") == title
+                and item.get("country") == country
+            ),
             None
         )
 
-        actual_value = (
-            updated_item.get("actual")
-            if updated_item else None
-        )
+        if not updated_item:
+            continue
 
-        if updated_item and actual_value not in [None, ""]:
-            country_flag = "🇺🇸" if updated_item.get("country") == "USD" else "🇪🇺"
+        actual_value = updated_item.get("actual")
+
+        if actual_value not in [None, ""]:
+            country_flag = "🇺🇸" if country == "USD" else "🇪🇺"
 
             update_message = (
                 f"📊 *AGGIORNAMENTO NEWS*\n\n"
-                f"{country_flag} {updated_item.get('country')}\n"
-                f"📰 {updated_item.get('title')}\n"
+                f"{country_flag} {country}\n"
+                f"📰 {title}\n"
                 f"📊 Actual: {updated_item.get('actual')}\n"
                 f"🔮 Forecast: {updated_item.get('forecast') or 'n/a'}\n"
                 f"{impact_logic(updated_item)}"
             )
 
             send_message(update_message)
+            monitored_events.pop(key)
 
-            updated_events.add(event_id)
-            monitored_events.pop(event_id)
-
-            logging.info(f"Aggiornamento inviato per evento {event_id}")
+            logging.info(f"Actual inviato per {title}")
         else:
-            logging.info(f"Actual non ancora disponibile per {event_id}")
+            logging.info(f"Actual non ancora disponibile per {title}")
 
 # ==============================
 # FLASK APP
@@ -255,26 +242,19 @@ def health():
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
 
-# Job giornaliero
 scheduler.add_job(
     process_news,
-    CronTrigger(
-        hour=6,
-        minute=0,
-        day_of_week="mon-fri",
-        timezone=pytz.utc
-    ),
+    CronTrigger(hour=6, minute=0, day_of_week="mon-fri", timezone=pytz.utc),
     id="daily_news_job",
     max_instances=1,
     coalesce=True
 )
 
-# Job controllo actual ogni 5 minuti
 scheduler.add_job(
     check_all_events_update,
-    'interval',
+    "interval",
     minutes=5,
-    id="global_actual_update",
+    id="actual_update_job",
     next_run_time=datetime.now(pytz.utc) + timedelta(minutes=5),
     max_instances=1,
     coalesce=True
@@ -283,5 +263,5 @@ scheduler.add_job(
 scheduler.start()
 logging.info("Scheduler avviato")
 
-# Esecuzione iniziale
+# Avvio iniziale
 process_news(initial=True)
