@@ -33,9 +33,9 @@ italy_tz = pytz.timezone("Europe/Rome")
 # GLOBAL STATE
 # ==============================
 
-high_impact_events = []   # eventi filtrati USD/EUR High Impact di oggi
-monitored_events = {}     # eventi da controllare per l'actual
-updated_events = set()    # eventi già aggiornati
+high_impact_events = []
+monitored_events = {}
+updated_events = set()
 
 # ==============================
 # TELEGRAM
@@ -43,7 +43,11 @@ updated_events = set()    # eventi già aggiornati
 
 def send_message(text):
     try:
-        bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
+        bot.send_message(
+            chat_id=CHAT_ID,
+            text=text,
+            parse_mode="Markdown"
+        )
         logging.info("Messaggio inviato su Telegram")
     except Exception as e:
         logging.error(f"Errore invio Telegram: {e}")
@@ -61,6 +65,14 @@ def fetch_news():
         )
         response.raise_for_status()
         return response.json()
+
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 429:
+            logging.warning("429 Too Many Requests - rate limit raggiunto")
+        else:
+            logging.error(f"HTTP error: {e}")
+        return []
+
     except Exception as e:
         logging.error(f"Errore fetch news: {e}")
         return []
@@ -81,12 +93,12 @@ def impact_logic(event):
     forecast = event.get("forecast")
     title = event.get("title", "").lower()
 
-    if actual is None or forecast is None:
+    if not actual or not forecast:
         return "⚖️ Impatto: n/a"
 
     try:
-        actual_val = float(actual)
-        forecast_val = float(forecast)
+        actual_val = float(str(actual).replace("%", ""))
+        forecast_val = float(str(forecast).replace("%", ""))
 
         inverse_keywords = ["unemployment", "jobless", "claims"]
         is_inverse = any(word in title for word in inverse_keywords)
@@ -114,20 +126,24 @@ def impact_logic(event):
 # ==============================
 
 def process_news(initial=False):
-    """Filtra gli eventi High Impact USD/EUR di oggi e li schedula per monitoraggio actual"""
     global high_impact_events, monitored_events
 
     news = fetch_news()
+    if not news:
+        logging.info("Nessuna news disponibile")
+        return
+
     now = datetime.now(timezone.utc)
-
-    high_impact_events = []
-
     start_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end_day = start_day + timedelta(days=1)
+
+    high_impact_events = []
+    monitored_events = {}
 
     for event in news:
         if event.get("impact") != "High":
             continue
+
         if event.get("country") not in ["USD", "EUR"]:
             continue
 
@@ -140,8 +156,7 @@ def process_news(initial=False):
                 event["parsed_date"] = event_date
                 high_impact_events.append(event)
 
-        except Exception as e:
-            logging.warning(f"Errore parsing data evento: {e}")
+        except Exception:
             continue
 
     high_impact_events.sort(key=lambda x: x["parsed_date"])
@@ -166,11 +181,10 @@ def process_news(initial=False):
             f"🕒 *{event_date_italy.strftime('%H:%M')}*\n"
             f"{country_flag} {event.get('country')}\n"
             f"📰 {event.get('title')}\n"
-            f"🔮 Forecast: {event.get('forecast')}\n"
-            f"📈 Previous: {event.get('previous')}\n\n"
+            f"🔮 Forecast: {event.get('forecast') or 'n/a'}\n"
+            f"📈 Previous: {event.get('previous') or 'n/a'}\n\n"
         )
 
-        # Aggiungi l'evento alla lista di monitoraggio
         monitored_events[event_id] = event
 
     message += 'Aggiornamento dato quando esce "actual"'
@@ -182,7 +196,6 @@ def process_news(initial=False):
 # ==============================
 
 def check_all_events_update():
-    """Controlla tutti gli eventi High Impact ancora senza actual ogni 5 minuti"""
     global monitored_events, updated_events
 
     if not monitored_events:
@@ -190,35 +203,41 @@ def check_all_events_update():
 
     news = fetch_news()
     if not news:
-        logging.info("Nessuna news disponibile per controllo actual")
         return
 
     for event_id in list(monitored_events.keys()):
-        event = monitored_events[event_id]
+        original_event = monitored_events[event_id]
 
-        # Cerca l'evento corrispondente nella news aggiornata
         updated_item = next(
             (item for item in news if generate_event_id(item) == event_id),
             None
         )
 
-        if updated_item and updated_item.get("actual"):
+        actual_value = (
+            updated_item.get("actual")
+            if updated_item else None
+        )
+
+        if updated_item and actual_value not in [None, ""]:
             country_flag = "🇺🇸" if updated_item.get("country") == "USD" else "🇪🇺"
+
             update_message = (
                 f"📊 *AGGIORNAMENTO NEWS*\n\n"
                 f"{country_flag} {updated_item.get('country')}\n"
                 f"📰 {updated_item.get('title')}\n"
                 f"📊 Actual: {updated_item.get('actual')}\n"
-                f"🔮 Forecast: {updated_item.get('forecast')}\n"
+                f"🔮 Forecast: {updated_item.get('forecast') or 'n/a'}\n"
                 f"{impact_logic(updated_item)}"
             )
 
             send_message(update_message)
+
             updated_events.add(event_id)
             monitored_events.pop(event_id)
+
             logging.info(f"Aggiornamento inviato per evento {event_id}")
         else:
-            logging.info(f"Actual non ancora disponibile per {event_id} → {updated_item.get('actual') if updated_item else None}")
+            logging.info(f"Actual non ancora disponibile per {event_id}")
 
 # ==============================
 # FLASK APP
@@ -236,25 +255,33 @@ def health():
 
 scheduler = BackgroundScheduler(timezone=pytz.utc)
 
-# Controllo giornaliero all'avvio: processa gli eventi
-trigger_daily = CronTrigger(
-    hour=6,  # puoi regolare
-    minute=0,
-    day_of_week="mon-fri",
-    timezone=pytz.utc
+# Job giornaliero
+scheduler.add_job(
+    process_news,
+    CronTrigger(
+        hour=6,
+        minute=0,
+        day_of_week="mon-fri",
+        timezone=pytz.utc
+    ),
+    id="daily_news_job",
+    max_instances=1,
+    coalesce=True
 )
-scheduler.add_job(process_news, trigger_daily)
 
-# Controllo interval ogni 5 minuti per aggiornamento actual
+# Job controllo actual ogni 5 minuti
 scheduler.add_job(
     check_all_events_update,
     'interval',
     minutes=5,
-    id="global_actual_update"
+    id="global_actual_update",
+    next_run_time=datetime.now(pytz.utc) + timedelta(minutes=5),
+    max_instances=1,
+    coalesce=True
 )
 
 scheduler.start()
 logging.info("Scheduler avviato")
 
-# Esegui al primo avvio
+# Esecuzione iniziale
 process_news(initial=True)
