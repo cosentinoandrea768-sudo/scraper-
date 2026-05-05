@@ -146,5 +146,14 @@ scheduler.add_job(
 scheduler.start()
 logging.info("Scheduler avviato")
 
-# Avvio iniziale al deploy
-process_news(initial=True)
+# Catch-up: se il bot riparte tra le 6:00 e le 9:00 UTC in un giorno feriale,
+# manda subito il messaggio invece di aspettare il cron del giorno dopo
+now = datetime.now(timezone.utc)
+is_weekday = now.weekday() < 5
+is_morning_window = 6 <= now.hour < 9
+
+if is_weekday and is_morning_window:
+    logging.info("Catch-up: avvio in finestra mattutina, invio immediato")
+    process_news(initial=False)
+else:
+    process_news(initial=True)
