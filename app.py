@@ -65,8 +65,7 @@ def fetch_news():
 # PROCESS NEWS GIORNALIERO
 # ==============================
 
-def process_news(initial=False):
-
+def process_news():
     news = fetch_news()
     if not news:
         logging.info("Nessuna news trovata")
@@ -82,23 +81,17 @@ def process_news(initial=False):
     for event in news:
         if event.get("impact") != "High":
             continue
-
         if event.get("country") not in ["USD", "EUR"]:
             continue
-
         try:
             event_date = datetime.fromisoformat(
                 event.get("date").replace("Z", "+00:00")
             ).astimezone(timezone.utc)
-
             if not (start_day <= event_date < end_day):
                 continue
-
             found = True
-
             event_date_it = event_date.astimezone(italy_tz)
             country_flag = "🇺🇸" if event.get("country") == "USD" else "🇪🇺"
-
             message += (
                 f"🕒 *{event_date_it.strftime('%H:%M')}*\n"
                 f"{country_flag} {event.get('country')}\n"
@@ -106,19 +99,14 @@ def process_news(initial=False):
                 f"🔮 Forecast: {event.get('forecast') or 'n/a'}\n"
                 f"📈 Previous: {event.get('previous') or 'n/a'}\n\n"
             )
-
         except Exception:
             continue
-
-    if initial:
-        send_message("🚀 Bot avviato correttamente!")
 
     if not found:
         send_message("📌 Oggi non ci sono eventi High Impact USD/EUR")
         return
 
     send_message(message)
-
 # ==============================
 # FLASK APP
 # ==============================
