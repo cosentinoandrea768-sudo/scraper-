@@ -107,6 +107,7 @@ def process_news():
         return
 
     send_message(message)
+
 # ==============================
 # FLASK APP
 # ==============================
@@ -142,6 +143,6 @@ is_morning_window = 6 <= now.hour < 9
 
 if is_weekday and is_morning_window:
     logging.info("Catch-up: avvio in finestra mattutina, invio immediato")
-    process_news(initial=False)
+    process_news()
 else:
-    process_news(initial=True)
+    send_message("🚀 Bot avviato correttamente!")
