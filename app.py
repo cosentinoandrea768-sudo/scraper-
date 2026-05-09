@@ -1,6 +1,8 @@
 import os
 import logging
 import requests
+import time
+import random
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -48,18 +50,26 @@ def send_message(text):
 # FETCH NEWS
 # ==============================
 
-def fetch_news():
-    try:
-        response = requests.get(
-            FOREX_URL,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=20
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        logging.error(f"Errore fetch news: {e}")
-        return []
+def fetch_news(retries=3, delay=30):
+    for attempt in range(retries):
+        try:
+            response = requests.get(
+                FOREX_URL,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=20
+            )
+            if response.status_code == 429:
+                wait = delay * (attempt + 1) + random.randint(10, 30)
+                logging.warning(f"429 Too Many Requests, ritento tra {wait}s (tentativo {attempt+1}/{retries})")
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logging.error(f"Errore fetch news (tentativo {attempt+1}/{retries}): {e}")
+            if attempt < retries - 1:
+                time.sleep(delay)
+    return []
 
 # ==============================
 # PROCESS NEWS GIORNALIERO
@@ -68,7 +78,7 @@ def fetch_news():
 def process_news():
     news = fetch_news()
     if not news:
-        logging.info("Nessuna news trovata")
+        send_message("⚠️ Impossibile recuperare le news oggi (errore sorgente dati)")
         return
 
     now = datetime.now(timezone.utc)
@@ -122,11 +132,11 @@ def health():
 # SCHEDULER
 # ==============================
 
-scheduler = BackgroundScheduler(timezone=pytz.utc)
+scheduler = BackgroundScheduler(timezone=italy_tz)
 
 scheduler.add_job(
     process_news,
-    CronTrigger(hour=6, minute=0, day_of_week="mon-fri", timezone=pytz.utc),
+    CronTrigger(hour=7, minute=0, day_of_week="mon-fri", timezone=italy_tz),
     id="daily_news_job",
     max_instances=1,
     coalesce=True
@@ -135,11 +145,11 @@ scheduler.add_job(
 scheduler.start()
 logging.info("Scheduler avviato")
 
-# Catch-up: se il bot riparte tra le 6:00 e le 9:00 UTC in un giorno feriale,
+# Catch-up: se il bot riparte tra le 7:00 e le 10:00 italiane in un giorno feriale,
 # manda subito il messaggio invece di aspettare il cron del giorno dopo
-now = datetime.now(timezone.utc)
+now = datetime.now(italy_tz)
 is_weekday = now.weekday() < 5
-is_morning_window = 6 <= now.hour < 9
+is_morning_window = 7 <= now.hour < 10
 
 if is_weekday and is_morning_window:
     logging.info("Catch-up: avvio in finestra mattutina, invio immediato")
